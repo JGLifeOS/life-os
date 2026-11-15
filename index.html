@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#090d1b">
+<title>LIFE OS</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#090d1b;color:#f7f8ff;font:16px system-ui,-apple-system,sans-serif}header{padding:25px 20px;background:#11182b;border-bottom:1px solid #27304a}.logo{font-size:25px;font-weight:800;letter-spacing:2px}.logo span{color:#9a7cff}main{max-width:650px;margin:auto;padding:24px 18px}small,.muted{color:#a9b3cf}h1{font-size:29px;margin:12px 0 8px}.card{background:#151d32;border:1px solid #2b3655;border-radius:18px;padding:20px;margin:18px 0}.gradient{background:linear-gradient(125deg,#173b8c,#6533ad)}h2{font-size:18px;margin:0 0 15px}button{background:#7659ed;border:0;color:#fff;border-radius:11px;padding:12px 15px;font-weight:bold;cursor:pointer}input[type=text]{width:100%;padding:14px;border-radius:10px;background:#0b1224;color:#fff;border:1px solid #35415e;margin-bottom:10px;font-size:16px}.task{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #303950}.task.done span{text-decoration:line-through;color:#8993ac}.task span{flex:1;overflow-wrap:anywhere}.delete{background:transparent;color:#f9a4b3;padding:6px}footer{text-align:center;color:#8491af;padding:25px}
+</style>
+</head>
+<body>
+<header><div class="logo">LIFE <span>OS</span></div><small>Your life. Upgraded.</small></header>
+<main>
+<small>TON ESPACE PERSONNEL</small><h1>Bienvenue dans LIFE OS</h1><p class="muted">Organise ta vie depuis un seul endroit.</p>
+<section class="card gradient"><h2>✦ LIFE AI</h2><p>Ton futur assistant personnel intelligent.</p><button type="button" id="ai">Découvrir</button></section>
+<section class="card"><h2>✓ Mes tâches</h2><form id="taskForm"><input type="text" id="taskInput" placeholder="Ajouter une tâche..." maxlength="180" required><button type="submit">Ajouter</button></form><div id="taskList"></div></section>
+<section class="card"><h2>▣ Mes documents</h2><p class="muted">Un espace sécurisé pour tes documents sera bientôt disponible.</p></section>
+<section class="card"><h2>◈ Mes finances</h2><p class="muted">Ton futur tableau de bord financier.</p></section>
+</main><footer>LIFE OS · Version 1.0</footer>
+<script>
+const key='life-os-tasks-v1';let tasks=[];try{tasks=JSON.parse(localStorage.getItem(key))||[]}catch(e){tasks=[]}if(!Array.isArray(tasks))tasks=[];
+const list=document.getElementById('taskList');function save(){try{localStorage.setItem(key,JSON.stringify(tasks))}catch(e){alert('Le navigateur ne permet pas de sauvegarder les tâches.')}}
+function render(){list.replaceChildren();tasks.forEach((task,i)=>{const row=document.createElement('div');row.className='task'+(task.done?' done':'');const check=document.createElement('input');check.type='checkbox';check.checked=!!task.done;check.addEventListener('change',()=>{task.done=check.checked;save();render()});const label=document.createElement('span');label.textContent=task.text;const del=document.createElement('button');del.type='button';del.className='delete';del.textContent='Supprimer';del.addEventListener('click',()=>{tasks.splice(i,1);save();render()});row.append(check,label,del);list.append(row)})}
+document.getElementById('taskForm').addEventListener('submit',e=>{e.preventDefault();const input=document.getElementById('taskInput');const value=input.value.trim();if(!value)return;tasks.push({text:value,done:false});input.value='';save();render()});document.getElementById('ai').addEventListener('click',()=>alert('LIFE AI sera connecté dans une prochaine étape.'));render();
+</script>
+</body></html>
