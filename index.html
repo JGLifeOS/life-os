@@ -10,6 +10,20 @@
 </style>
 </head>
 <body>
+  
+<div id="loginScreen" style="padding:24px;text-align:center">
+  <h2>Connexion LIFE OS</h2>
+  <form id="loginForm">
+    <input id="loginEmail" type="email"
+      placeholder="Adresse e-mail" required>
+    <input id="loginPassword" type="password"
+      placeholder="Mot de passe" required>
+    <button type="submit">Se connecter</button>
+  </form>
+  <p id="loginMessage" role="status"></p>
+</div>
+
+<div id="appContent" style="display:none">
 <header><div class="logo">LIFE <span>OS</span></div><small>Your life. Upgraded.</small></header>
 <main>
 <small>TON ESPACE PERSONNEL</small><h1>Bienvenue dans LIFE OS</h1><p class="muted">Organise ta vie depuis un seul endroit.</p>
@@ -34,6 +48,7 @@
 
   
 </main><footer>LIFE OS · Version 1.0</footer>
+  </div>
 <script>
 const key='life-os-tasks-v1';let tasks=[];try{tasks=JSON.parse(localStorage.getItem(key))||[]}catch(e){tasks=[]}if(!Array.isArray(tasks))tasks=[];
 const list=document.getElementById('taskList');function save(){try{localStorage.setItem(key,JSON.stringify(tasks))}catch(e){alert('Le navigateur ne permet pas de sauvegarder les tâches.')}}
@@ -63,6 +78,48 @@ const supabaseClient = window.supabase.createClient(
   SUPABASE_URL,
   SUPABASE_KEY
 );
+</script>
+
+<script>
+document.getElementById("loginForm").addEventListener("submit", async function(event) {
+  event.preventDefault();
+
+  const email = document.getElementById("loginEmail").value;
+  const password = document.getElementById("loginPassword").value;
+  const message = document.getElementById("loginMessage");
+
+  message.textContent = "Connexion en cours...";
+
+  try {
+    const { error } = await supabaseClient.auth.signInWithPassword({
+      email: email,
+      password: password
+    });
+
+    if (error) {
+      message.textContent = "Connexion impossible : " + error.message;
+      return;
+    }
+
+    message.textContent = "Connexion réussie !";
+    document.getElementById("loginScreen").style.display = "none";
+    document.getElementById("appContent").style.display = "block";
+  } catch (error) {
+    message.textContent = "Erreur de connexion. Réessaie.";
+  }
+});
+  async function verifierSession() {
+  const { data: { session } } =
+    await supabaseClient.auth.getSession();
+
+  document.getElementById("loginScreen").style.display =
+    session ? "none" : "block";
+
+  document.getElementById("appContent").style.display =
+    session ? "block" : "none";
+}
+
+verifierSession();
 </script>
 
 </body></html>
