@@ -20,7 +20,19 @@
       placeholder="Mot de passe" required>
     <button type="submit">Se connecter</button>
   </form>
+  
   <p id="loginMessage" role="status"></p>
+</div>
+
+<div id="resetScreen" style="display:none; padding:24px; text-align:center;">
+  <h2>Nouveau mot de passe LIFE OS</h2>
+  <form id="resetForm">
+    <input id="newPassword" type="password"
+      placeholder="Nouveau mot de passe"
+      minlength="8" required>
+    <button type="submit">Enregistrer</button>
+  </form>
+  <p id="resetMessage" role="status"></p>
 </div>
 
 <div id="appContent" style="display:none">
