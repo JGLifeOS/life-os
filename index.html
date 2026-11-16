@@ -52,4 +52,17 @@ function askLifeAI() {
   response.textContent = 'LIFE AI sera bientôt disponible !';
 }
 </script>
+  
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script>
+const SUPABASE_URL = "https://otpfjlwvdcjlcnuhwkyv.supabase.co/rest/v1/";
+const SUPABASE_KEY = "sb_publishable_dZLpeOFZm5WqHnUBStVECg_y16lOUVO";
+
+const supabaseClient = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY
+);
+</script>
+
 </body></html>
