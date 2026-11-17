@@ -138,7 +138,9 @@ document.getElementById("loginForm").addEventListener("submit", async function(e
     session ? "block" : "none";
 }
 
-verifierSession();
+if (!window.location.href.includes("type=recovery")) {
+  verifierSession();
+}
   document.getElementById("resetForm").addEventListener("submit", async (event) => {
   event.preventDefault();
 
