@@ -62,11 +62,100 @@
 </main><footer>ELNOVIA · Version 1.0</footer>
   </div>
 <script>
-const key='life-os-tasks-v1';let tasks=[];try{tasks=JSON.parse(localStorage.getItem(key))||[]}catch(e){tasks=[]}if(!Array.isArray(tasks))tasks=[];
-const list=document.getElementById('taskList');function save(){try{localStorage.setItem(key,JSON.stringify(tasks))}catch(e){alert('Le navigateur ne permet pas de sauvegarder les tâches.')}}
-function render(){list.replaceChildren();tasks.forEach((task,i)=>{const row=document.createElement('div');row.className='task'+(task.done?' done':'');const check=document.createElement('input');check.type='checkbox';check.checked=!!task.done;check.addEventListener('change',()=>{task.done=check.checked;save();render()});const label=document.createElement('span');label.textContent=task.text;const del=document.createElement('button');del.type='button';del.className='delete';del.textContent='Supprimer';del.addEventListener('click',()=>{tasks.splice(i,1);save();render()});row.append(check,label,del);list.append(row)})}
-document.getElementById('taskForm').addEventListener('submit',e=>{e.preventDefault();const input=document.getElementById('taskInput');const value=input.value.trim();if(!value)return;tasks.push({text:value,done:false});input.value='';save();render()});
-render();
+
+const list = document.getElementById('taskList');
+let tasks = [];
+
+async function loadTasks() {
+  const { data, error } = await supabaseClient
+    .from('tasks')
+    .select('id, title, status')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error(error);
+    alert('Impossible de charger les tâches.');
+    return;
+  }
+
+  tasks = data || [];
+  render();
+}
+
+function render() {
+  list.replaceChildren();
+
+  tasks.forEach(task => {
+    const row = document.createElement('div');
+    row.className = 'task' + (task.status === 'done' ? ' done' : '');
+
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = task.status === 'done';
+
+    check.addEventListener('change', async () => {
+      const { error } = await supabaseClient
+        .from('tasks')
+        .update({ status: check.checked ? 'done' : 'todo' })
+        .eq('id', task.id);
+
+      if (error) alert('Erreur de modification.');
+      await loadTasks();
+    });
+
+    const label = document.createElement('span');
+    label.textContent = task.title;
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'delete';
+    del.textContent = 'Supprimer';
+
+    del.addEventListener('click', async () => {
+      const { error } = await supabaseClient
+        .from('tasks')
+        .delete()
+        .eq('id', task.id);
+
+      if (error) alert('Erreur de suppression.');
+      await loadTasks();
+    });
+
+    row.append(check, label, del);
+    list.append(row);
+  });
+}
+
+document.getElementById('taskForm').addEventListener('submit', async e => {
+  e.preventDefault();
+
+  const input = document.getElementById('taskInput');
+  const title = input.value.trim();
+  if (!title) return;
+
+  const { data: { user } } = await supabaseClient.auth.getUser();
+
+  if (!user) {
+    alert('Connecte-toi pour ajouter une tâche.');
+    return;
+  }
+
+  const { error } = await supabaseClient
+    .from('tasks')
+    .insert({ user_id: user.id, title, status: 'todo' });
+
+  if (error) {
+    console.error(error);
+    alert('Impossible d’ajouter la tâche.');
+    return;
+  }
+
+  input.value = '';
+  await loadTasks();
+});
+
+
+
 
 
 async function askLifeAI() {
@@ -127,6 +216,7 @@ const supabaseClient = window.supabase.createClient(
   SUPABASE_URL,
   SUPABASE_KEY
 );
+  
   supabaseClient.auth.onAuthStateChange((event) => {
   if (event === "PASSWORD_RECOVERY") {
     document.getElementById("loginScreen").style.display = "none";
@@ -173,8 +263,10 @@ document.getElementById("loginForm").addEventListener("submit", async function(e
 
   document.getElementById("appContent").style.display =
     session ? "block" : "none";
+if (session) {
+  await loadTasks();
 }
-
+}
 if (!window.location.href.includes("type=recovery")) {
   verifierSession();
 }
