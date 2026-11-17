@@ -67,7 +67,52 @@ const list=document.getElementById('taskList');function save(){try{localStorage.
 function render(){list.replaceChildren();tasks.forEach((task,i)=>{const row=document.createElement('div');row.className='task'+(task.done?' done':'');const check=document.createElement('input');check.type='checkbox';check.checked=!!task.done;check.addEventListener('change',()=>{task.done=check.checked;save();render()});const label=document.createElement('span');label.textContent=task.text;const del=document.createElement('button');del.type='button';del.className='delete';del.textContent='Supprimer';del.addEventListener('click',()=>{tasks.splice(i,1);save();render()});row.append(check,label,del);list.append(row)})}
 document.getElementById('taskForm').addEventListener('submit',e=>{e.preventDefault();const input=document.getElementById('taskInput');const value=input.value.trim();if(!value)return;tasks.push({text:value,done:false});input.value='';save();render()});document.getElementById('ai').addEventListener('click',()=>alert('LIFE AI sera connecté dans une prochaine étape.'));render();
 
-function askLifeAI() {
+
+async function askLifeAI() {
+  const questionInput = document.getElementById('aiQuestion');
+  const response = document.getElementById('aiResponse');
+  const question = questionInput.value.trim();
+
+  if (!question) {
+    response.textContent = 'Écris une question.';
+    return;
+  }
+
+  response.textContent = 'ELNOVIA réfléchit...';
+
+  try {
+    const { data: { session }, error: sessionError } =
+      await supabaseClient.auth.getSession();
+
+    if (sessionError || !session) {
+      response.textContent = 'Connecte-toi pour utiliser ELNOVIA AI.';
+      return;
+    }
+
+    const { data, error } = await supabaseClient.functions.invoke(
+      'life-ai',
+      {
+        body: { question },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`
+        }
+      }
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    response.textContent =
+      data?.answer || data?.error || 'Aucune réponse reçue.';
+
+  } catch (error) {
+    console.error('Erreur ELNOVIA AI :', error);
+    response.textContent =
+      'Impossible de contacter ELNOVIA AI pour le moment.';
+  }
+}
+
   const question = document.getElementById('aiQuestion').value.trim();
   const response = document.getElementById('aiResponse');
 
