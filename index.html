@@ -60,6 +60,32 @@
 <input type="date" id="taskDueDate">
 
 
+<div id="taskFilters">
+  <select id="filterStatus">
+    <option value="all">Tous les statuts</option>
+    <option value="todo">À faire</option>
+    <option value="in_progress">En cours</option>
+    <option value="done">Terminées</option>
+  </select>
+
+  <select id="filterPriority">
+    <option value="all">Toutes les priorités</option>
+    <option value="urgent">🔴 Urgente</option>
+    <option value="high">🟠 Haute</option>
+    <option value="medium">🟡 Normale</option>
+    <option value="low">🟢 Basse</option>
+  </select>
+
+  <select id="filterCategory">
+    <option value="all">Toutes les catégories</option>
+    <option value="Personnel">🏠 Personnel</option>
+    <option value="Travail">💼 Travail</option>
+    <option value="Sport">🏋️ Sport</option>
+    <option value="Finances">💰 Finances</option>
+    <option value="Autre">📌 Autre</option>
+  </select>
+</div>
+
 <button type="submit">Ajouter</button></form><div id="taskList"></div></section>
 <section class="card"><h2>▣ Mes documents</h2><p class="muted">Un espace sécurisé pour tes documents sera bientôt disponible.</p></section>
 <section class="card"><h2>◈ Mes finances</h2><p class="muted">Ton futur tableau de bord financier.</p></section>
@@ -108,7 +134,21 @@ async function loadTasks() {
 function render() {
   list.replaceChildren();
 
-  tasks.forEach(task => {
+  
+const statusFilter = document.getElementById('filterStatus').value;
+const priorityFilter = document.getElementById('filterPriority').value;
+const categoryFilter = document.getElementById('filterCategory').value;
+
+const filteredTasks = tasks.filter(task => {
+  const matchStatus = statusFilter === 'all' || task.status === statusFilter;
+  const matchPriority = priorityFilter === 'all' || task.priority === priorityFilter;
+  const matchCategory = categoryFilter === 'all' || task.category === categoryFilter;
+
+  return matchStatus && matchPriority && matchCategory;
+});
+
+filteredTasks.forEach(task => {
+
     const row = document.createElement('div');
     row.className = 'task' + (task.status === 'done' ? ' done' : '');
 
