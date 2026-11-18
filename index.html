@@ -148,9 +148,12 @@ document.getElementById('taskForm').addEventListener('submit', async e => {
     return;
   }
 
+const category = document.getElementById('taskCategory').value;
+
   const { error } = await supabaseClient
     .from('tasks')
-    .insert({ user_id: user.id, title, status: 'todo' });
+    
+.insert({ user_id: user.id, title, status: 'todo', category });
 
   if (error) {
     console.error(error);
