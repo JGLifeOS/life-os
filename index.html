@@ -77,7 +77,7 @@ let tasks = [];
 async function loadTasks() {
   const { data, error } = await supabaseClient
     .from('tasks')
-    .select('id, title, status')
+    .select('id, title, status, category')
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -112,7 +112,9 @@ function render() {
     });
 
     const label = document.createElement('span');
-    label.textContent = task.title;
+    
+label.textContent = task.title + ' — ' + (task.category || 'Personnel');
+
 
     const del = document.createElement('button');
     del.type = 'button';
