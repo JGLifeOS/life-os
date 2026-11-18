@@ -139,6 +139,7 @@ async function loadTasks() {
 }
 
 function render() {
+  renderCalendar();
   list.replaceChildren();
 
   
@@ -476,6 +477,23 @@ function renderCalendar() {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = day;
+    
+const dateKey = [
+  year,
+  String(month + 1).padStart(2, '0'),
+  String(day).padStart(2, '0')
+].join('-');
+
+const hasTasks = tasks.some(task =>
+  task.due_date &&
+  task.due_date.slice(0, 10) === dateKey
+);
+
+if (hasTasks) {
+  button.textContent = day + ' 🔵';
+  button.title = 'Tâche prévue ce jour';
+}
+
 
     button.onclick = () => {
       const selected = new Date(year, month, day);
