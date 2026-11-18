@@ -86,7 +86,9 @@ let tasks = [];
 async function loadTasks() {
   const { data, error } = await supabaseClient
     .from('tasks')
-    .select('id, title, status, category')
+   
+.select('id, title, status, category, priority')
+
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -122,7 +124,17 @@ function render() {
 
     const label = document.createElement('span');
     
-label.textContent = task.title + ' — ' + (task.category || 'Personnel');
+
+const priorityLabels = {
+  low: '🟢 Basse',
+  medium: '🟡 Normale',
+  high: '🟠 Haute',
+  urgent: '🔴 Urgente'
+};
+
+label.textContent = task.title
+  + ' — ' + (task.category || 'Personnel')
+  + ' — ' + (priorityLabels[task.priority] || '🟡 Normale');
 
 
     const del = document.createElement('button');
