@@ -88,6 +88,13 @@
 
 <button type="submit">Ajouter</button></form><div id="taskList"></div></section>
 <section class="card"><h2>▣ Mes documents</h2><p class="muted">Un espace sécurisé pour tes documents sera bientôt disponible.</p></section>
+  
+<section class="card" id="calendarSection">
+  <h2>📅 Mon calendrier</h2>
+  <div id="calendar"></div>
+  <div id="calendarTasks"></div>
+</section>
+
 <section class="card"><h2>◈ Mes finances</h2><p class="muted">Ton futur tableau de bord financier.</p></section>
 
   
@@ -409,4 +416,91 @@ if (!window.location.href.includes("type=recovery")) {
 });
 </script>
 
+
+<script>
+let calendarDate = new Date();
+
+function renderCalendar() {
+  const calendar = document.getElementById('calendar');
+  const details = document.getElementById('calendarTasks');
+  if (!calendar || !details) return;
+
+  const year = calendarDate.getFullYear();
+  const month = calendarDate.getMonth();
+
+  const monthTitle = calendarDate.toLocaleDateString('fr-FR', {
+    month: 'long',
+    year: 'numeric'
+  });
+
+  const firstDay = new Date(year, month, 1);
+  const offset = (firstDay.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  calendar.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.innerHTML = `
+    <button type="button" id="prevMonth">◀</button>
+    <strong>${monthTitle}</strong>
+    <button type="button" id="nextMonth">▶</button>
+  `;
+  calendar.appendChild(header);
+
+  document.getElementById('prevMonth').onclick = () => {
+    calendarDate.setMonth(calendarDate.getMonth() - 1);
+    renderCalendar();
+  };
+
+  document.getElementById('nextMonth').onclick = () => {
+    calendarDate.setMonth(calendarDate.getMonth() + 1);
+    renderCalendar();
+  };
+
+  const grid = document.createElement('div');
+  grid.style.display = 'grid';
+  grid.style.gridTemplateColumns = 'repeat(7, 1fr)';
+  grid.style.gap = '6px';
+
+  ['L', 'M', 'M', 'J', 'V', 'S', 'D'].forEach(day => {
+    const cell = document.createElement('strong');
+    cell.textContent = day;
+    grid.appendChild(cell);
+  });
+
+  for (let i = 0; i < offset; i++) {
+    grid.appendChild(document.createElement('span'));
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = day;
+
+    button.onclick = () => {
+      const selected = new Date(year, month, day);
+      const dateKey = [
+        selected.getFullYear(),
+        String(selected.getMonth() + 1).padStart(2, '0'),
+        String(selected.getDate()).padStart(2, '0')
+      ].join('-');
+
+      const matches = tasks.filter(task =>
+        task.due_date &&
+        task.due_date.slice(0, 10) === dateKey
+      );
+
+      details.textContent = matches.length
+        ? matches.map(task => '• ' + task.title).join(' | ')
+        : 'Aucune tâche prévue ce jour.';
+    };
+
+    grid.appendChild(button);
+  }
+
+  calendar.appendChild(grid);
+}
+
+renderCalendar();
+</script>
 </body></html>
