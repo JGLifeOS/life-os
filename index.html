@@ -485,7 +485,8 @@ const dateKey = [
 ].join('-');
 
 
-const hasTasks = tasks.some(task => {
+
+const dayTasks = tasks.filter(task => {
   if (!task.due_date) return false;
 
   const taskDate = new Date(task.due_date);
@@ -498,11 +499,37 @@ const hasTasks = tasks.some(task => {
   return formattedDate === dateKey;
 });
 
+const priorityColors = {
+  low: '#22c55e',
+  medium: '#eab308',
+  high: '#f97316',
+  urgent: '#ef4444'
+};
 
-if (hasTasks) {
-  button.textContent = day + ' 🔵';
-  button.title = 'Tâche prévue ce jour';
+const priorityOrder = {
+  low: 1,
+  medium: 2,
+  high: 3,
+  urgent: 4
+};
+
+if (dayTasks.length > 0) {
+  const highestPriority = dayTasks.reduce((highest, task) =>
+    (priorityOrder[task.priority] || 2) >
+    (priorityOrder[highest] || 0)
+      ? task.priority
+      : highest
+  , null);
+
+  button.style.border = '2px solid ' +
+    priorityColors[highestPriority];
+
+  button.title = dayTasks.length + ' tâche(s) prévue(s)';
 }
+
+
+
+
 
 
     button.onclick = () => {
