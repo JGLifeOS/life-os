@@ -484,10 +484,20 @@ const dateKey = [
   String(day).padStart(2, '0')
 ].join('-');
 
-const hasTasks = tasks.some(task =>
-  task.due_date &&
-  task.due_date.slice(0, 10) === dateKey
-);
+
+const hasTasks = tasks.some(task => {
+  if (!task.due_date) return false;
+
+  const taskDate = new Date(task.due_date);
+  const formattedDate = [
+    taskDate.getFullYear(),
+    String(taskDate.getMonth() + 1).padStart(2, '0'),
+    String(taskDate.getDate()).padStart(2, '0')
+  ].join('-');
+
+  return formattedDate === dateKey;
+});
+
 
 if (hasTasks) {
   button.textContent = day + ' 🔵';
