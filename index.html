@@ -90,7 +90,8 @@ async function loadTasks() {
   const { data, error } = await supabaseClient
     .from('tasks')
    
-.select('id, title, status, category, priority')
+
+.select('id, title, status, category, priority, due_date')
 
     .order('created_at', { ascending: false });
 
@@ -138,6 +139,15 @@ const priorityLabels = {
 label.textContent = task.title
   + ' — ' + (task.category || 'Personnel')
   + ' — ' + (priorityLabels[task.priority] || '🟡 Normale');
+
+if (task.due_date) {
+  const date = new Date(task.due_date);
+  label.textContent += ' — 📅 ' + date.toLocaleDateString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+}
 
 
     const del = document.createElement('button');
