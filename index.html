@@ -190,6 +190,20 @@ if (task.due_date) {
 
 
 }
+  
+if (task.due_date && task.status !== 'done') {
+    const due = new Date(task.due_date);
+    const today = new Date();
+
+    due.setHours(23, 59, 59, 999);
+
+    if (due < today) {
+        label.style.color = '#ff6b6b';
+        label.style.fontWeight = 'bold';
+        label.textContent += ' ⚠️ En retard';
+    }
+}
+
 
 
     const del = document.createElement('button');
