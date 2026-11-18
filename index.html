@@ -56,6 +56,9 @@
   <option value="high">🟠 Haute</option>
   <option value="urgent">🔴 Urgente</option>
 </select>
+  
+<input type="date" id="taskDueDate">
+
 
 <button type="submit">Ajouter</button></form><div id="taskList"></div></section>
 <section class="card"><h2>▣ Mes documents</h2><p class="muted">Un espace sécurisé pour tes documents sera bientôt disponible.</p></section>
@@ -175,12 +178,23 @@ const category = document.getElementById('taskCategory').value;
   
 const priority = document.getElementById('taskPriority').value;
 
+const dueDate = document.getElementById('taskDueDate').value;
+
 
   const { error } = await supabaseClient
     .from('tasks')
     
 
-.insert({ user_id: user.id, title, status: 'todo', category, priority });
+
+.insert({
+  user_id: user.id,
+  title,
+  status: 'todo',
+  category,
+  priority,
+  due_date: dueDate ? dueDate + 'T12:00:00' : null
+});
+
 
   if (error) {
     console.error(error);
