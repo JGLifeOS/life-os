@@ -186,7 +186,12 @@ if (task.due_date) {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric'
-  });
+  }); 
+if (task.due_date) {
+  const date = new Date(task.due_date);
+  label.textContent += ' — 📅 ' + date.toLocaleDateString('fr-FR');
+}
+
 }
 
 
