@@ -48,6 +48,13 @@
   <option value="Finances">💰 Finances</option>
   <option value="Autre">📌 Autre</option>
 </select>
+<select id="taskPriority">
+  <option value="normal">🟡 Normale</option>
+  <option value="low">🟢 Basse</option>
+  <option value="high">🟠 Haute</option>
+  <option value="urgent">🔴 Urgente</option>
+</select>
+
 <button type="submit">Ajouter</button></form><div id="taskList"></div></section>
 <section class="card"><h2>▣ Mes documents</h2><p class="muted">Un espace sécurisé pour tes documents sera bientôt disponible.</p></section>
 <section class="card"><h2>◈ Mes finances</h2><p class="muted">Ton futur tableau de bord financier.</p></section>
@@ -151,11 +158,15 @@ document.getElementById('taskForm').addEventListener('submit', async e => {
   }
 
 const category = document.getElementById('taskCategory').value;
+  
+const priority = document.getElementById('taskPriority').value;
+
 
   const { error } = await supabaseClient
     .from('tasks')
     
-.insert({ user_id: user.id, title, status: 'todo', category });
+
+.insert({ user_id: user.id, title, status: 'todo', category, priority });
 
   if (error) {
     console.error(error);
