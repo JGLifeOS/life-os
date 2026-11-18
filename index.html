@@ -87,6 +87,14 @@
 </div>
 
 <button type="submit">Ajouter</button></form><div id="taskList"></div></section>
+  
+<section class="card">
+  <h2>🔔 Mes rappels</h2>
+  <div id="taskReminders">
+    Aucun rappel pour le moment.
+  </div>
+</section>
+
 <section class="card"><h2>▣ Mes documents</h2><p class="muted">Un espace sécurisé pour tes documents sera bientôt disponible.</p></section>
   
 <section class="card" id="calendarSection">
@@ -139,6 +147,9 @@ async function loadTasks() {
 }
 
 function render() {
+  
+renderReminders();
+
   renderCalendar();
   list.replaceChildren();
 
@@ -558,4 +569,53 @@ if (dayTasks.length > 0) {
 
 renderCalendar();
 </script>
+  
+<script>
+function renderReminders() {
+  const container = document.getElementById('taskReminders');
+  if (!container || typeof tasks === 'undefined') return;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  container.replaceChildren();
+
+  const reminders = tasks.filter(task => {
+    if (!task.due_date || task.status === 'done') return false;
+
+    const due = new Date(task.due_date);
+    due.setHours(0, 0, 0, 0);
+
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    return due <= tomorrow;
+  });
+
+  if (reminders.length === 0) {
+    container.textContent = '✅ Aucun rappel pour le moment.';
+    return;
+  }
+
+  reminders.forEach(task => {
+    const due = new Date(task.due_date);
+    due.setHours(0, 0, 0, 0);
+
+    const message = due < today
+      ? '🔴 En retard'
+      : due.getTime() === today.getTime()
+        ? "🟠 Aujourd'hui"
+        : '🔵 Demain';
+
+    const item = document.createElement('p');
+    item.textContent = message + ' — ' + task.title;
+    container.appendChild(item);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  renderReminders();
+});
+</script>
+
 </body></html>
