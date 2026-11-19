@@ -1531,4 +1531,204 @@ function showAiActions(actions) {
   renderSpaces();
 })();
 </script>
+  <script>
+// Tâches partagées v1 : choix de l'espace à l'ajout, affichage des tâches partagées
+(function () {
+  let spaceNames = {};
+  let currentUserId = null;
+
+  const priorityLabels = {
+    low: '🟢 Basse',
+    medium: '🟡 Normale',
+    high: '🟠 Haute',
+    urgent: '🔴 Urgente'
+  };
+
+  // Liste déroulante « Perso / espaces » dans le formulaire d'ajout
+  const oldForm = document.getElementById('taskForm');
+  const form = oldForm.cloneNode(true);
+  oldForm.replaceWith(form);
+
+  const spaceSelect = document.createElement('select');
+  spaceSelect.id = 'taskSpace';
+  spaceSelect.title = 'Où ajouter la tâche';
+  form.querySelector('#taskDueDate').after(spaceSelect);
+
+  function fillSpaceSelect() {
+    const previous = spaceSelect.value;
+    spaceSelect.replaceChildren();
+
+    const personal = document.createElement('option');
+    personal.value = '';
+    personal.textContent = '🏠 Perso (privée)';
+    spaceSelect.appendChild(personal);
+
+    Object.entries(spaceNames).forEach(([id, name]) => {
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = '👥 ' + name;
+      spaceSelect.appendChild(option);
+    });
+
+    if (previous && spaceNames[previous]) spaceSelect.value = previous;
+  }
+
+  // Chargement des tâches (personnelles et partagées) et des noms d'espaces
+  window.loadTasks = async function () {
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    currentUserId = user ? user.id : null;
+
+    const { data, error } = await supabaseClient
+      .from('tasks')
+      .select('id, user_id, space_id, title, status, category, priority, due_date')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error(error);
+      alert('Impossible de charger les tâches.');
+      return;
+    }
+
+    const spacesResult = await supabaseClient.from('spaces').select('id, name');
+    spaceNames = {};
+    (spacesResult.data || []).forEach(s => { spaceNames[s.id] = s.name; });
+
+    tasks = data || [];
+    fillSpaceSelect();
+    render();
+  };
+
+  // Affichage de la liste (avec le nom de l'espace, et suppression réservée au créateur)
+  window.render = function () {
+    renderReminders();
+    renderCalendar();
+    list.replaceChildren();
+
+    const statusFilter = document.getElementById('filterStatus').value;
+    const priorityFilter = document.getElementById('filterPriority').value;
+    const categoryFilter = document.getElementById('filterCategory').value;
+
+    const filteredTasks = tasks.filter(task => {
+      const matchStatus = statusFilter === 'all' || task.status === statusFilter;
+      const matchPriority = priorityFilter === 'all' || task.priority === priorityFilter;
+      const matchCategory = categoryFilter === 'all' || task.category === categoryFilter;
+      return matchStatus && matchPriority && matchCategory;
+    });
+
+    filteredTasks.forEach(task => {
+      const row = document.createElement('div');
+      row.className = 'task' + (task.status === 'done' ? ' done' : '');
+
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      check.checked = task.status === 'done';
+      check.addEventListener('change', async () => {
+        const { error } = await supabaseClient
+          .from('tasks')
+          .update({ status: check.checked ? 'done' : 'todo' })
+          .eq('id', task.id);
+        if (error) alert('Erreur de modification.');
+        await loadTasks();
+      });
+
+      const label = document.createElement('span');
+      label.textContent = task.title
+        + ' — ' + (task.category || 'Personnel')
+        + ' — ' + (priorityLabels[task.priority] || '🟡 Normale');
+
+      if (task.space_id && spaceNames[task.space_id]) {
+        label.textContent += ' — 👥 ' + spaceNames[task.space_id];
+      }
+
+      if (task.due_date) {
+        const date = new Date(task.due_date);
+        label.textContent += ' — 📅 ' + date.toLocaleDateString('fr-FR', {
+          day: '2-digit', month: '2-digit', year: 'numeric'
+        });
+      }
+
+      if (task.due_date && task.status !== 'done') {
+        const due = new Date(task.due_date);
+        due.setHours(23, 59, 59, 999);
+        if (due < new Date()) {
+          label.style.color = '#ff6b6b';
+          label.style.fontWeight = 'bold';
+          label.textContent += ' ⚠️ En retard';
+        }
+      }
+
+      row.append(check, label);
+
+      if (!task.user_id || task.user_id === currentUserId) {
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'delete';
+        del.textContent = 'Supprimer';
+        del.addEventListener('click', async () => {
+          const { error } = await supabaseClient.from('tasks').delete().eq('id', task.id);
+          if (error) alert('Erreur de suppression.');
+          await loadTasks();
+        });
+        row.appendChild(del);
+      }
+
+      list.append(row);
+    });
+  };
+
+  // Ajout d'une tâche (personnelle ou dans un espace)
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+
+    const input = document.getElementById('taskInput');
+    const title = input.value.trim();
+    if (!title) return;
+
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) {
+      alert('Connecte-toi pour ajouter une tâche.');
+      return;
+    }
+
+    const category = document.getElementById('taskCategory').value;
+    const priority = document.getElementById('taskPriority').value;
+    const dueDate = document.getElementById('taskDueDate').value;
+    const spaceId = document.getElementById('taskSpace').value;
+
+    const { error } = await supabaseClient.from('tasks').insert({
+      user_id: user.id,
+      title,
+      status: 'todo',
+      category,
+      priority,
+      due_date: dueDate ? dueDate + 'T12:00:00' : null,
+      space_id: spaceId || null
+    });
+
+    if (error) {
+      console.error(error);
+      alert('Impossible d’ajouter la tâche.');
+      return;
+    }
+
+    input.value = '';
+    await loadTasks();
+  });
+
+  // Recharge les tâches quand la carte « Espaces partagés » change (création, départ, etc.)
+  const spacesSection = document.getElementById('spacesSection');
+  if (spacesSection) {
+    let timer = null;
+    new MutationObserver(() => {
+      clearTimeout(timer);
+      timer = setTimeout(() => window.loadTasks(), 400);
+    }).observe(spacesSection, { childList: true, subtree: true });
+  }
+
+  // Premier chargement
+  supabaseClient.auth.getSession().then(({ data }) => {
+    if (data && data.session) window.loadTasks();
+  });
+})();
+</script>
 </body></html>
