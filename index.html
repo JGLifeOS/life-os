@@ -1315,4 +1315,220 @@ function showAiActions(actions) {
   box.append(confirmBtn, cancelBtn);
 }
 </script>
+  <script>
+// Espaces partagés v1 : créer un espace, rejoindre avec un code, quitter ou supprimer
+(function () {
+  const tasksCard = [...document.querySelectorAll('section.card')]
+    .find(s => (s.querySelector('h2')?.textContent || '').includes('Mes tâches'));
+  if (!tasksCard) return;
+
+  const section = document.createElement('section');
+  section.className = 'card';
+  section.id = 'spacesSection';
+  tasksCard.after(section);
+
+  let spaces = [];
+
+  const title = document.createElement('h2');
+  title.textContent = '👥 Espaces partagés';
+
+  const intro = document.createElement('p');
+  intro.className = 'muted';
+  intro.textContent = 'Crée un espace pour partager des tâches avec tes proches, ou rejoins-en un avec un code.';
+
+  // Formulaire : créer un espace
+  const createForm = document.createElement('form');
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.placeholder = 'Nom du nouvel espace (ex. Famille)';
+  nameInput.maxLength = 60;
+  nameInput.required = true;
+  const createBtn = document.createElement('button');
+  createBtn.type = 'submit';
+  createBtn.textContent = "Créer l'espace";
+  createForm.append(nameInput, createBtn);
+
+  // Formulaire : rejoindre avec un code
+  const joinForm = document.createElement('form');
+  joinForm.style.marginTop = '16px';
+  const codeInput = document.createElement('input');
+  codeInput.type = 'text';
+  codeInput.placeholder = "Code d'invitation reçu";
+  codeInput.maxLength = 30;
+  codeInput.required = true;
+  const joinBtn = document.createElement('button');
+  joinBtn.type = 'submit';
+  joinBtn.textContent = 'Rejoindre un espace';
+  joinForm.append(codeInput, joinBtn);
+
+  const status = document.createElement('p');
+  status.className = 'muted';
+  const listBox = document.createElement('div');
+
+  section.append(title, intro, createForm, joinForm, status, listBox);
+
+  function renderSpaces() {
+    listBox.replaceChildren();
+
+    if (spaces.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = "Tu n'es dans aucun espace pour le moment.";
+      listBox.appendChild(empty);
+      return;
+    }
+
+    spaces.forEach(space => {
+      const box = document.createElement('div');
+      box.style.padding = '12px 0';
+      box.style.borderTop = '1px solid #303950';
+
+      const head = document.createElement('p');
+      head.style.fontWeight = 'bold';
+      head.style.margin = '0 0 6px';
+      head.textContent = space.name + ' — ' + space.count + ' membre' + (space.count > 1 ? 's' : '') +
+        ' — ' + (space.role === 'owner' ? 'propriétaire' : 'membre');
+
+      const codeLine = document.createElement('p');
+      codeLine.className = 'muted';
+      codeLine.style.margin = '0 0 8px';
+      codeLine.textContent = "Code d'invitation : " + space.code;
+
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.textContent = 'Copier le code';
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(space.code);
+          status.textContent = '✅ Code copié : envoie-le à la personne à inviter.';
+        } catch (_) {
+          status.textContent = 'Copie impossible : sélectionne le code et copie-le à la main.';
+        }
+      });
+
+      const actionBtn = document.createElement('button');
+      actionBtn.type = 'button';
+      actionBtn.className = 'delete';
+      actionBtn.style.marginLeft = '8px';
+
+      if (space.role === 'owner') {
+        actionBtn.textContent = "Supprimer l'espace";
+        actionBtn.addEventListener('click', async () => {
+          if (!confirm('Supprimer l\u2019espace « ' + space.name + ' » pour tous ses membres ?')) return;
+          const { error } = await supabaseClient.from('spaces').delete().eq('id', space.id);
+          if (error) {
+            console.error(error);
+            status.textContent = "Impossible de supprimer l'espace.";
+            return;
+          }
+          status.textContent = 'Espace supprimé.';
+          await loadSpaces();
+        });
+      } else {
+        actionBtn.textContent = "Quitter l'espace";
+        actionBtn.addEventListener('click', async () => {
+          if (!confirm('Quitter l\u2019espace « ' + space.name + ' » ?')) return;
+          const { data: { user } } = await supabaseClient.auth.getUser();
+          if (!user) return;
+          const { error } = await supabaseClient
+            .from('space_members').delete()
+            .eq('space_id', space.id).eq('user_id', user.id);
+          if (error) {
+            console.error(error);
+            status.textContent = "Impossible de quitter l'espace.";
+            return;
+          }
+          status.textContent = 'Tu as quitté l\u2019espace.';
+          await loadSpaces();
+        });
+      }
+
+      box.append(head, codeLine, copyBtn, actionBtn);
+      listBox.appendChild(box);
+    });
+  }
+
+  async function loadSpaces() {
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) {
+      spaces = [];
+      renderSpaces();
+      return;
+    }
+
+    const { data, error } = await supabaseClient
+      .from('space_members')
+      .select('space_id, user_id, role, space:spaces(id, name, join_code)');
+
+    if (error) {
+      console.error(error);
+      status.textContent = 'Impossible de charger les espaces.';
+      return;
+    }
+
+    const bySpace = new Map();
+    (data || []).forEach(row => {
+      if (!row.space) return;
+      const entry = bySpace.get(row.space_id) ||
+        { id: row.space.id, name: row.space.name, code: row.space.join_code, count: 0, role: null };
+      entry.count += 1;
+      if (row.user_id === user.id) entry.role = row.role;
+      bySpace.set(row.space_id, entry);
+    });
+
+    spaces = [...bySpace.values()].filter(s => s.role);
+    renderSpaces();
+  }
+
+  createForm.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const name = nameInput.value.trim();
+    if (!name) return;
+
+    const { error } = await supabaseClient.rpc('create_space', { p_name: name });
+    if (error) {
+      console.error(error);
+      status.textContent = "Impossible de créer l'espace.";
+      return;
+    }
+
+    nameInput.value = '';
+    status.textContent = '✅ Espace créé.';
+    await loadSpaces();
+  });
+
+  joinForm.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const code = codeInput.value.trim();
+    if (!code) return;
+
+    const { error } = await supabaseClient.rpc('join_space', { p_code: code });
+    if (error) {
+      console.error(error);
+      status.textContent = (error.message || '').includes('Code invalide')
+        ? 'Code invalide : vérifie-le et réessaie.'
+        : "Impossible de rejoindre l'espace.";
+      return;
+    }
+
+    codeInput.value = '';
+    status.textContent = '✅ Tu as rejoint l\u2019espace.';
+    await loadSpaces();
+  });
+
+  window.refreshSpaces = loadSpaces;
+
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    if (session && (event === 'INITIAL_SESSION' || event === 'SIGNED_IN')) {
+      setTimeout(loadSpaces, 0);
+    }
+    if (!session) {
+      spaces = [];
+      renderSpaces();
+    }
+  });
+
+  renderSpaces();
+})();
+</script>
 </body></html>
