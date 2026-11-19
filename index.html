@@ -942,4 +942,206 @@ async function askLifeAI() {
   }
 }
 </script>
+  <script>
+// Finances v1 : dépenses du mois (ajout, liste, total par catégorie, suppression)
+(function () {
+  const section = [...document.querySelectorAll('section.card')]
+    .find(s => (s.querySelector('h2')?.textContent || '').includes('Mes finances'));
+  if (!section) return;
+
+  const categories = ['Courses', 'Logement', 'Transport', 'Loisirs', 'Santé', 'Abonnements', 'Autre'];
+  const euro = cents => (cents / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+  const ymd = d => [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, '0'),
+    String(d.getDate()).padStart(2, '0')
+  ].join('-');
+  let expenses = [];
+
+  // Construction de la carte
+  section.replaceChildren();
+
+  const title = document.createElement('h2');
+  title.textContent = '◈ Mes finances';
+
+  const form = document.createElement('form');
+
+  const labelInput = document.createElement('input');
+  labelInput.type = 'text';
+  labelInput.placeholder = 'Dépense (ex. Courses)';
+  labelInput.maxLength = 120;
+  labelInput.required = true;
+
+  const amountInput = document.createElement('input');
+  amountInput.type = 'text';
+  amountInput.inputMode = 'decimal';
+  amountInput.placeholder = 'Montant en € (ex. 45,50)';
+  amountInput.required = true;
+
+  const categorySelect = document.createElement('select');
+  categories.forEach(c => {
+    const option = document.createElement('option');
+    option.value = c;
+    option.textContent = c;
+    categorySelect.appendChild(option);
+  });
+  categorySelect.style.marginRight = '8px';
+
+  const dateInput = document.createElement('input');
+  dateInput.type = 'date';
+  dateInput.value = ymd(new Date());
+
+  const submitBtn = document.createElement('button');
+  submitBtn.type = 'submit';
+  submitBtn.textContent = 'Ajouter la dépense';
+  submitBtn.style.display = 'block';
+  submitBtn.style.marginTop = '10px';
+
+  form.append(labelInput, amountInput, categorySelect, dateInput, submitBtn);
+
+  const status = document.createElement('p');
+  status.className = 'muted';
+  const summary = document.createElement('div');
+  const listBox = document.createElement('div');
+
+  section.append(title, form, status, summary, listBox);
+
+  // Affichage
+  function renderExpenses() {
+    summary.replaceChildren();
+    listBox.replaceChildren();
+
+    const monthName = new Date().toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+    const head = document.createElement('p');
+
+    if (expenses.length === 0) {
+      head.textContent = 'Aucune dépense en ' + monthName + '.';
+      summary.appendChild(head);
+      return;
+    }
+
+    const cents = e => Math.round(Number(e.amount) * 100);
+    const total = expenses.reduce((sum, e) => sum + cents(e), 0);
+    head.textContent = 'Total de ' + monthName + ' : ' + euro(total);
+    head.style.fontWeight = 'bold';
+    summary.appendChild(head);
+
+    const byCategory = {};
+    expenses.forEach(e => {
+      byCategory[e.category] = (byCategory[e.category] || 0) + cents(e);
+    });
+    Object.entries(byCategory)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([category, amount]) => {
+        const line = document.createElement('p');
+        line.className = 'muted';
+        line.textContent = '• ' + category + ' : ' + euro(amount);
+        summary.appendChild(line);
+      });
+
+    expenses.slice(0, 20).forEach(e => {
+      const row = document.createElement('div');
+      row.className = 'task';
+
+      const text = document.createElement('span');
+      text.textContent = e.label + ' — ' + e.category + ' — ' + euro(cents(e)) + ' — ' +
+        new Date(e.spent_on + 'T12:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'delete';
+      del.textContent = 'Supprimer';
+      del.addEventListener('click', async () => {
+        if (!confirm('Supprimer cette dépense ?')) return;
+        const { error } = await supabaseClient.from('expenses').delete().eq('id', e.id);
+        if (error) {
+          console.error(error);
+          status.textContent = 'Erreur de suppression.';
+          return;
+        }
+        status.textContent = '';
+        await loadExpenses();
+      });
+
+      row.append(text, del);
+      listBox.appendChild(row);
+    });
+  }
+
+  // Chargement des dépenses du mois en cours
+  async function loadExpenses() {
+    const now = new Date();
+    const start = ymd(new Date(now.getFullYear(), now.getMonth(), 1));
+    const end = ymd(new Date(now.getFullYear(), now.getMonth() + 1, 1));
+
+    const { data, error } = await supabaseClient
+      .from('expenses')
+      .select('id, label, amount, category, spent_on')
+      .gte('spent_on', start)
+      .lt('spent_on', end)
+      .order('spent_on', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error(error);
+      status.textContent = 'Impossible de charger les dépenses.';
+      return;
+    }
+    expenses = data || [];
+    renderExpenses();
+  }
+
+  // Ajout d'une dépense
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+
+    const label = labelInput.value.trim();
+    const value = Number(amountInput.value.replace(/\s/g, '').replace(',', '.'));
+    if (!label) return;
+
+    if (!Number.isFinite(value) || value <= 0 || value >= 1000000) {
+      status.textContent = 'Montant invalide : écris par exemple 45,50.';
+      return;
+    }
+
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) {
+      status.textContent = 'Connecte-toi pour ajouter une dépense.';
+      return;
+    }
+
+    const { error } = await supabaseClient.from('expenses').insert({
+      user_id: user.id,
+      label,
+      amount: Math.round(value * 100) / 100,
+      category: categorySelect.value,
+      spent_on: dateInput.value || ymd(new Date())
+    });
+
+    if (error) {
+      console.error(error);
+      status.textContent = "Impossible d'ajouter la dépense.";
+      return;
+    }
+
+    labelInput.value = '';
+    amountInput.value = '';
+    status.textContent = '✅ Dépense ajoutée.';
+    await loadExpenses();
+  });
+
+  // Chargement automatique à la connexion
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    if (session && (event === 'INITIAL_SESSION' || event === 'SIGNED_IN')) {
+      setTimeout(loadExpenses, 0);
+    }
+    if (!session) {
+      expenses = [];
+      renderExpenses();
+    }
+  });
+
+  renderExpenses();
+})();
+</script>
 </body></html>
