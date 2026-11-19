@@ -887,4 +887,59 @@ function showAiActions(actions) {
   box.append(confirmBtn, cancelBtn);
 }
 </script>
+  <script>
+// Version 3 : mémoire de conversation (6 derniers messages) + message clair si la limite est atteinte
+let aiHistory = [];
+
+async function askLifeAI() {
+  const questionInput = document.getElementById('aiQuestion');
+  const response = document.getElementById('aiResponse');
+  const actionsBox = document.getElementById('aiActions');
+  const question = questionInput.value.trim();
+
+  actionsBox.replaceChildren();
+
+  if (!question) {
+    response.textContent = 'Écris une question.';
+    return;
+  }
+
+  response.textContent = 'ELNOVIA réfléchit...';
+
+  try {
+    const { data: { session }, error: sessionError } =
+      await supabaseClient.auth.getSession();
+
+    if (sessionError || !session) {
+      response.textContent = 'Connecte-toi pour utiliser ELNOVIA AI.';
+      return;
+    }
+
+    const { data, error } = await supabaseClient.functions.invoke('life-ai', {
+      body: { question, history: aiHistory },
+      headers: { Authorization: `Bearer ${session.access_token}` }
+    });
+
+    if (error) throw error;
+
+    response.textContent = data?.answer || data?.error || 'Aucune réponse reçue.';
+    showAiActions(data?.actions || []);
+
+    if (data?.answer) {
+      aiHistory.push({ role: 'user', text: question });
+      aiHistory.push({ role: 'assistant', text: data.answer });
+      aiHistory = aiHistory.slice(-6);
+      questionInput.value = '';
+    }
+  } catch (error) {
+    console.error('Erreur ELNOVIA AI :', error);
+    let message = 'Impossible de contacter ELNOVIA AI pour le moment.';
+    try {
+      const details = await error.context.json();
+      if (error.context.status === 429 && details?.error) message = details.error;
+    } catch (_) {}
+    response.textContent = message;
+  }
+}
+</script>
 </body></html>
