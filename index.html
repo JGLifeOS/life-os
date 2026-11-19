@@ -1130,6 +1130,7 @@ async function askLifeAI() {
     await loadExpenses();
   });
 
+    window.refreshExpenses = loadExpenses;
   // Chargement automatique à la connexion
   supabaseClient.auth.onAuthStateChange((event, session) => {
     if (session && (event === 'INITIAL_SESSION' || event === 'SIGNED_IN')) {
@@ -1143,5 +1144,175 @@ async function askLifeAI() {
 
   renderExpenses();
 })();
+</script>
+  <script>
+// Version 3 : gère aussi la création de dépenses
+function showAiActions(actions) {
+  const box = document.getElementById('aiActions');
+  box.replaceChildren();
+
+  const categories = ['Personnel', 'Travail', 'Sport', 'Finances', 'Autre'];
+  const expenseCategories = ['Courses', 'Logement', 'Transport', 'Loisirs', 'Santé', 'Abonnements', 'Autre'];
+  const priorities = ['low', 'medium', 'high', 'urgent'];
+  const statuses = ['todo', 'in_progress', 'done'];
+  const statusLabels = { todo: 'à faire', in_progress: 'en cours', done: 'terminée' };
+  const priorityLabels = { low: 'basse', medium: 'normale', high: 'haute', urgent: 'urgente' };
+  const dateOk = d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
+  const fmt = d => new Date(d + 'T12:00:00').toLocaleDateString('fr-FR', {
+    weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric'
+  });
+  const euro = n => n.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+  const now = new Date();
+  const todayKey = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')
+  ].join('-');
+
+  const items = [];
+
+  (actions || []).forEach(a => {
+    if (!a) return;
+
+    if (a.type === 'create_task' && typeof a.title === 'string' && a.title.trim()) {
+      const title = a.title.trim().slice(0, 180);
+      const category = categories.includes(a.category) ? a.category : 'Personnel';
+      const row = {
+        title,
+        status: 'todo',
+        category,
+        priority: priorities.includes(a.priority) ? a.priority : 'medium',
+        due_date: dateOk(a.due_date) ? a.due_date + 'T12:00:00' : null
+      };
+      let text = '• Ajouter : ' + title + ' — ' + category;
+      if (dateOk(a.due_date)) text += ' — 📅 ' + fmt(a.due_date);
+      items.push({ kind: 'create', row, text });
+    }
+
+    if (a.type === 'update_task') {
+      const task = tasks.find(t => t.id === a.task_id);
+      if (!task) return;
+
+      const changes = {};
+      const parts = [];
+
+      if (statuses.includes(a.status)) {
+        changes.status = a.status;
+        parts.push('statut : ' + statusLabels[a.status]);
+      }
+      if (dateOk(a.due_date)) {
+        changes.due_date = a.due_date + 'T12:00:00';
+        parts.push('nouvelle date : ' + fmt(a.due_date));
+      }
+      if (categories.includes(a.category)) {
+        changes.category = a.category;
+        parts.push('catégorie : ' + a.category);
+      }
+      if (priorities.includes(a.priority)) {
+        changes.priority = a.priority;
+        parts.push('priorité : ' + priorityLabels[a.priority]);
+      }
+      if (typeof a.title === 'string' && a.title.trim()) {
+        changes.title = a.title.trim().slice(0, 180);
+        parts.push('nouveau titre : ' + changes.title);
+      }
+
+      if (parts.length === 0) return;
+
+      items.push({
+        kind: 'update',
+        id: task.id,
+        changes,
+        text: '• Modifier « ' + task.title + ' » — ' + parts.join(', ')
+      });
+    }
+
+    if (a.type === 'create_expense' && typeof a.title === 'string' && a.title.trim()) {
+      const amount = Number(a.amount);
+      if (!Number.isFinite(amount) || amount <= 0 || amount >= 1000000) return;
+
+      const label = a.title.trim().slice(0, 120);
+      const category = expenseCategories.includes(a.expense_category) ? a.expense_category : 'Autre';
+      const spent = dateOk(a.spent_on) ? a.spent_on : todayKey;
+      const rounded = Math.round(amount * 100) / 100;
+
+      items.push({
+        kind: 'expense',
+        row: { label, amount: rounded, category, spent_on: spent },
+        text: '• Noter la dépense : ' + label + ' — ' + euro(rounded) + ' — ' + category + ' — 📅 ' + fmt(spent)
+      });
+    }
+  });
+
+  if (items.length === 0) return;
+
+  const heading = document.createElement('p');
+  heading.textContent = 'Actions proposées :';
+  box.appendChild(heading);
+
+  items.forEach(item => {
+    const line = document.createElement('p');
+    line.textContent = item.text;
+    box.appendChild(line);
+  });
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.type = 'button';
+  confirmBtn.textContent = '✅ Confirmer';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.textContent = 'Annuler';
+  cancelBtn.style.marginLeft = '8px';
+
+  cancelBtn.addEventListener('click', () => {
+    box.replaceChildren();
+    document.getElementById('aiResponse').textContent = 'Actions annulées.';
+  });
+
+  confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true;
+    let failed = 0;
+
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) {
+      alert('Connecte-toi pour continuer.');
+      confirmBtn.disabled = false;
+      return;
+    }
+
+    const creations = items.filter(i => i.kind === 'create')
+      .map(i => ({ ...i.row, user_id: user.id }));
+
+    if (creations.length) {
+      const { error } = await supabaseClient.from('tasks').insert(creations);
+      if (error) { console.error(error); failed += creations.length; }
+    }
+
+    for (const item of items.filter(i => i.kind === 'update')) {
+      const { error } = await supabaseClient
+        .from('tasks').update(item.changes).eq('id', item.id);
+      if (error) { console.error(error); failed += 1; }
+    }
+
+    const expenseRows = items.filter(i => i.kind === 'expense')
+      .map(i => ({ ...i.row, user_id: user.id }));
+
+    if (expenseRows.length) {
+      const { error } = await supabaseClient.from('expenses').insert(expenseRows);
+      if (error) { console.error(error); failed += expenseRows.length; }
+    }
+
+    box.replaceChildren();
+    document.getElementById('aiResponse').textContent = failed
+      ? '⚠️ ' + failed + ' action(s) ont échoué.'
+      : '✅ ' + items.length + ' action(s) effectuée(s).';
+
+    await loadTasks();
+    if (window.refreshExpenses) await window.refreshExpenses();
+  });
+
+  box.append(confirmBtn, cancelBtn);
+}
 </script>
 </body></html>
