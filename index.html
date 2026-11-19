@@ -116,6 +116,7 @@
     Envoyer
   </button>
   <p id="aiResponse"></p>
+  <div id="aiActions"></div>
 </section>
 
 
@@ -625,5 +626,129 @@ document.addEventListener('DOMContentLoaded', () => {
   renderReminders();
 });
 </script>
+<script>
+// Remplace l'ancienne version de askLifeAI : affiche les actions et demande confirmation
+async function askLifeAI() {
+  const questionInput = document.getElementById('aiQuestion');
+  const response = document.getElementById('aiResponse');
+  const actionsBox = document.getElementById('aiActions');
+  const question = questionInput.value.trim();
 
+  actionsBox.replaceChildren();
+
+  if (!question) {
+    response.textContent = 'Écris une question.';
+    return;
+  }
+
+  response.textContent = 'ELNOVIA réfléchit...';
+
+  try {
+    const { data: { session }, error: sessionError } =
+      await supabaseClient.auth.getSession();
+
+    if (sessionError || !session) {
+      response.textContent = 'Connecte-toi pour utiliser ELNOVIA AI.';
+      return;
+    }
+
+    const { data, error } = await supabaseClient.functions.invoke('life-ai', {
+      body: { question },
+      headers: { Authorization: `Bearer ${session.access_token}` }
+    });
+
+    if (error) throw error;
+
+    response.textContent = data?.answer || data?.error || 'Aucune réponse reçue.';
+    showAiActions(data?.actions || []);
+  } catch (error) {
+    console.error('Erreur ELNOVIA AI :', error);
+    response.textContent = 'Impossible de contacter ELNOVIA AI pour le moment.';
+  }
+}
+
+function showAiActions(actions) {
+  const box = document.getElementById('aiActions');
+  box.replaceChildren();
+
+  const categories = ['Personnel', 'Travail', 'Sport', 'Finances', 'Autre'];
+  const priorities = ['low', 'medium', 'high', 'urgent'];
+  const dateOk = d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
+
+  const valid = actions.filter(a =>
+    a && a.type === 'create_task' &&
+    typeof a.title === 'string' && a.title.trim()
+  );
+
+  if (valid.length === 0) return;
+
+  const heading = document.createElement('p');
+  heading.textContent = 'Actions proposées :';
+  box.appendChild(heading);
+
+  valid.forEach(a => {
+    const line = document.createElement('p');
+    let text = '• ' + a.title.trim().slice(0, 180) +
+      ' — ' + (categories.includes(a.category) ? a.category : 'Personnel');
+    if (dateOk(a.due_date)) {
+      const d = new Date(a.due_date + 'T12:00:00');
+      text += ' — 📅 ' + d.toLocaleDateString('fr-FR', {
+        weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric'
+      });
+    }
+    line.textContent = text;
+    box.appendChild(line);
+  });
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.type = 'button';
+  confirmBtn.textContent = '✅ Confirmer';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.textContent = 'Annuler';
+  cancelBtn.style.marginLeft = '8px';
+
+  cancelBtn.addEventListener('click', () => {
+    box.replaceChildren();
+    document.getElementById('aiResponse').textContent = 'Actions annulées.';
+  });
+
+  confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true;
+
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) {
+      alert('Connecte-toi pour ajouter des tâches.');
+      confirmBtn.disabled = false;
+      return;
+    }
+
+    const rows = valid.map(a => ({
+      user_id: user.id,
+      title: a.title.trim().slice(0, 180),
+      status: 'todo',
+      category: categories.includes(a.category) ? a.category : 'Personnel',
+      priority: priorities.includes(a.priority) ? a.priority : 'medium',
+      due_date: dateOk(a.due_date) ? a.due_date + 'T12:00:00' : null
+    }));
+
+    const { error } = await supabaseClient.from('tasks').insert(rows);
+
+    if (error) {
+      console.error(error);
+      alert("Impossible d'ajouter les tâches.");
+      confirmBtn.disabled = false;
+      return;
+    }
+
+    box.replaceChildren();
+    document.getElementById('aiResponse').textContent =
+      '✅ ' + rows.length + ' tâche(s) ajoutée(s).';
+    await loadTasks();
+  });
+
+  box.append(confirmBtn, cancelBtn);
+}
+</script>
 </body></html>
