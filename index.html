@@ -3421,4 +3421,270 @@ function showAiActions(actions) {
 }
 .discover-link:hover, .discover-link:focus { background: #e9e4ff; }
 </style>
+  <script>
+// Récap v1 : bilan des dépenses par mois et par catégorie
+(function () {
+  const finances = [...document.querySelectorAll('section.card')]
+    .find(s => (s.querySelector('h2')?.textContent || '').includes('Mes finances'));
+  if (!finances) return;
+
+  const euro = cents => (cents / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = (y, m) => y + '-' + pad(m) + '-01';
+
+  const today = new Date();
+  const thisY = today.getFullYear();
+  const thisM = today.getMonth() + 1;
+  let viewY = thisY;
+  let viewM = thisM;
+  let rows = [];
+  let spaces = [];
+  let loadedFor = null;
+
+  const card = document.createElement('section');
+  card.className = 'card';
+  card.id = 'recapSection';
+  finances.after(card);
+
+  const heading = document.createElement('h2');
+  heading.textContent = '◔ Bilan du mois';
+
+  const nav = document.createElement('div');
+  nav.style.display = 'flex';
+  nav.style.alignItems = 'center';
+  nav.style.gap = '10px';
+  nav.style.marginBottom = '10px';
+
+  const prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.textContent = '◀';
+  prevBtn.setAttribute('aria-label', 'Mois précédent');
+
+  const monthLabel = document.createElement('strong');
+  monthLabel.style.flex = '1';
+  monthLabel.style.textAlign = 'center';
+  monthLabel.style.textTransform = 'capitalize';
+
+  const nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.textContent = '▶';
+  nextBtn.setAttribute('aria-label', 'Mois suivant');
+
+  nav.append(prevBtn, monthLabel, nextBtn);
+
+  const scopeSelect = document.createElement('select');
+  scopeSelect.style.marginBottom = '12px';
+
+  const status = document.createElement('p');
+  status.className = 'muted';
+  const body = document.createElement('div');
+
+  card.append(heading, nav, scopeSelect, status, body);
+
+  function fillScope() {
+    const keep = scopeSelect.value;
+    scopeSelect.replaceChildren();
+    [['', 'Toutes mes dépenses'], ['perso', 'Perso uniquement']].forEach(([v, t]) => {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = t;
+      scopeSelect.appendChild(o);
+    });
+    spaces.forEach(s => {
+      const o = document.createElement('option');
+      o.value = s.id;
+      o.textContent = '👥 ' + s.name;
+      scopeSelect.appendChild(o);
+    });
+    if ([...scopeSelect.options].some(o => o.value === keep)) scopeSelect.value = keep;
+  }
+
+  function monthKey(y, m) { return y + '-' + pad(m); }
+
+  function sumFor(list, key) {
+    const byCat = {};
+    let total = 0;
+    list.forEach(r => {
+      if (String(r.spent_on).slice(0, 7) !== key) return;
+      const cents = Math.round(Number(r.amount) * 100);
+      if (!Number.isFinite(cents)) return;
+      total += cents;
+      const cat = r.category || 'Autre';
+      byCat[cat] = (byCat[cat] || 0) + cents;
+    });
+    return { total, byCat };
+  }
+
+  function render() {
+    body.replaceChildren();
+
+    const label = new Date(viewY, viewM - 1, 1)
+      .toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+    monthLabel.textContent = label;
+    nextBtn.disabled = viewY === thisY && viewM === thisM;
+
+    const scope = scopeSelect.value;
+    const list = rows.filter(r =>
+      !scope || (scope === 'perso' ? !r.space_id : r.space_id === scope));
+
+    const prevY = viewM === 1 ? viewY - 1 : viewY;
+    const prevM = viewM === 1 ? 12 : viewM - 1;
+
+    const cur = sumFor(list, monthKey(viewY, viewM));
+    const prev = sumFor(list, monthKey(prevY, prevM));
+
+    const total = document.createElement('p');
+    total.style.fontSize = '26px';
+    total.style.fontWeight = '800';
+    total.style.margin = '4px 0';
+    total.textContent = euro(cur.total);
+    body.appendChild(total);
+
+    const compare = document.createElement('p');
+    compare.className = 'muted';
+    if (prev.total === 0 && cur.total === 0) {
+      compare.textContent = 'Aucune dépense ce mois-ci.';
+    } else if (prev.total === 0) {
+      compare.textContent = 'Pas de dépense le mois précédent pour comparer.';
+    } else {
+      const diff = cur.total - prev.total;
+      const pct = Math.round(Math.abs(diff) / prev.total * 100);
+      const prevName = new Date(prevY, prevM - 1, 1).toLocaleDateString('fr-FR', { month: 'long' });
+      compare.textContent = diff === 0
+        ? 'Identique à ' + prevName + ' (' + euro(prev.total) + ').'
+        : (diff > 0 ? '▲ ' : '▼ ') + euro(Math.abs(diff)) + ' (' + pct + ' %) de ' +
+          (diff > 0 ? 'plus' : 'moins') + ' qu’en ' + prevName + ' (' + euro(prev.total) + ').';
+    }
+    body.appendChild(compare);
+
+    const cats = Object.entries(cur.byCat).sort((a, b) => b[1] - a[1]);
+    cats.forEach(([cat, cents]) => {
+      const pct = cur.total > 0 ? Math.round(cents / cur.total * 100) : 0;
+
+      const line = document.createElement('div');
+      line.style.display = 'flex';
+      line.style.justifyContent = 'space-between';
+      line.style.marginTop = '10px';
+      const name = document.createElement('span');
+      name.textContent = cat;
+      const amount = document.createElement('span');
+      amount.textContent = euro(cents) + ' · ' + pct + ' %';
+      line.append(name, amount);
+
+      const track = document.createElement('div');
+      track.style.height = '8px';
+      track.style.borderRadius = '6px';
+      track.style.background = '#0b1224';
+      track.style.marginTop = '4px';
+      const fill = document.createElement('div');
+      fill.style.height = '100%';
+      fill.style.borderRadius = '6px';
+      fill.style.background = '#7659ed';
+      fill.style.width = Math.max(pct, 2) + '%';
+      track.appendChild(fill);
+
+      body.append(line, track);
+    });
+
+    // Les 3 plus grosses dépenses du mois
+    const key = monthKey(viewY, viewM);
+    const biggest = list
+      .filter(r => String(r.spent_on).slice(0, 7) === key)
+      .sort((a, b) => Number(b.amount) - Number(a.amount))
+      .slice(0, 3);
+
+    if (biggest.length) {
+      const t = document.createElement('p');
+      t.className = 'muted';
+      t.style.marginTop = '16px';
+      t.textContent = 'Plus grosses dépenses :';
+      body.appendChild(t);
+      biggest.forEach(r => {
+        const p = document.createElement('p');
+        p.style.margin = '4px 0';
+        p.textContent = '• ' + (r.label || 'Sans titre') + ' — ' +
+          euro(Math.round(Number(r.amount) * 100));
+        body.appendChild(p);
+      });
+    }
+  }
+
+  async function load() {
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) {
+      rows = [];
+      spaces = [];
+      fillScope();
+      status.textContent = '';
+      render();
+      return;
+    }
+
+    const sp = await supabaseClient.from('spaces').select('id, name').order('name');
+    spaces = sp.data || [];
+    fillScope();
+
+    // On charge le mois affiché et le mois d'avant pour la comparaison
+    const prevY = viewM === 1 ? viewY - 1 : viewY;
+    const prevM = viewM === 1 ? 12 : viewM - 1;
+    const nextY = viewM === 12 ? viewY + 1 : viewY;
+    const nextM = viewM === 12 ? 1 : viewM + 1;
+
+    status.textContent = 'Chargement…';
+    const { data, error } = await supabaseClient
+      .from('expenses')
+      .select('id, space_id, label, amount, category, spent_on')
+      .gte('spent_on', ymd(prevY, prevM))
+      .lt('spent_on', ymd(nextY, nextM))
+      .limit(2000);
+
+    if (error) {
+      console.error(error);
+      status.textContent = 'Impossible de charger le bilan.';
+      return;
+    }
+
+    status.textContent = '';
+    rows = data || [];
+    loadedFor = monthKey(viewY, viewM);
+    render();
+  }
+
+  prevBtn.addEventListener('click', () => {
+    viewM -= 1;
+    if (viewM === 0) { viewM = 12; viewY -= 1; }
+    load();
+  });
+  nextBtn.addEventListener('click', () => {
+    if (viewY === thisY && viewM === thisM) return;
+    viewM += 1;
+    if (viewM === 13) { viewM = 1; viewY += 1; }
+    load();
+  });
+  scopeSelect.addEventListener('change', render);
+
+  // Se met à jour quand une dépense est ajoutée ou supprimée
+  const previousRefresh = window.refreshExpenses;
+  window.refreshExpenses = async function () {
+    let result;
+    if (typeof previousRefresh === 'function') result = await previousRefresh.apply(this, arguments);
+    load();
+    return result;
+  };
+
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    if (session && (event === 'INITIAL_SESSION' || event === 'SIGNED_IN')) setTimeout(load, 0);
+    if (!session) { rows = []; spaces = []; fillScope(); render(); }
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) load();
+  });
+  supabaseClient.auth.getSession().then(({ data }) => {
+    if (data && data.session) load();
+  });
+
+  fillScope();
+  render();
+})();
+</script>
 </body></html>
