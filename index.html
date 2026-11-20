@@ -3848,4 +3848,174 @@ function showAiActions(actions) {
   refresh();
 })();
 </script>
+  <script>
+// Rappels v2 : notification du matin (corrige le bouton en double)
+(function () {
+  // Remplace la carte de la version précédente
+  const old = document.getElementById('pushSection');
+  if (old) old.remove();
+
+  const VAPID_PUBLIC_KEY = 'BLbUvIOXnFhMgfpKFAwKjBhsy-vfVKaZJYEDrwWJqzqI8drkNUzOWSR9D5rFazgDugr3jQnG7VWHKIrVt7LF5os';
+
+  const anchor = [...document.querySelectorAll('section.card')]
+    .find(s => (s.querySelector('h2')?.textContent || '').includes('Mes rappels'));
+
+  const card = document.createElement('section');
+  card.className = 'card';
+  card.id = 'pushSection';
+  if (anchor) anchor.after(card);
+  else (document.querySelector('main') || document.body).appendChild(card);
+
+  const heading = document.createElement('h2');
+  heading.textContent = '🔔 Rappels du matin';
+
+  const intro = document.createElement('p');
+  intro.className = 'muted';
+  intro.textContent = 'Chaque matin, ELNOVIA t’envoie une notification avec tes tâches du jour et celles en retard.';
+
+  const status = document.createElement('p');
+  const row = document.createElement('div');
+
+  card.append(heading, intro, status, row);
+
+  const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+  function b64ToBytes(b64) {
+    const pad = '='.repeat((4 - b64.length % 4) % 4);
+    const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+  }
+
+  function button(text, onClick) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = text;
+    b.style.marginRight = '8px';
+    b.style.marginTop = '6px';
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  async function currentSubscription() {
+    const reg = await navigator.serviceWorker.getRegistration();
+    return reg ? await reg.pushManager.getSubscription() : null;
+  }
+
+  let refreshId = 0;
+
+  async function refresh() {
+    const myId = ++refreshId;
+    let message = '';
+    let buttons = [];
+
+    if (!supported) {
+      message = 'Les notifications ne sont pas disponibles ici. Sur iPhone, ouvre ELNOVIA depuis l’icône de l’écran d’accueil (iOS 16.4 ou plus récent).';
+    } else if (Notification.permission === 'denied') {
+      message = 'Les notifications sont bloquées pour ELNOVIA. Autorise-les dans les réglages de ton appareil, puis reviens ici.';
+    } else {
+      const sub = await currentSubscription();
+      if (sub) {
+        message = '✅ Rappels activés sur cet appareil.';
+        buttons = [
+          button('Recevoir mon rappel maintenant', testNow),
+          button('Désactiver', disable)
+        ];
+      } else {
+        message = 'Les rappels ne sont pas activés sur cet appareil.';
+        buttons = [button('🔔 Activer les rappels', enable)];
+      }
+    }
+
+    // Si un autre rafraîchissement a démarré entre-temps, on laisse le dernier gagner
+    if (myId !== refreshId) return;
+    status.textContent = message;
+    row.replaceChildren(...buttons);
+  }
+
+  async function enable() {
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser();
+      if (!user) { status.textContent = 'Connecte-toi pour activer les rappels.'; return; }
+
+      status.textContent = 'Activation…';
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        status.textContent = 'Autorisation refusée. Tu pourras l’accorder plus tard dans les réglages.';
+        return;
+      }
+
+      await navigator.serviceWorker.register('sw.js');
+      const reg = await navigator.serviceWorker.ready;
+
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: b64ToBytes(VAPID_PUBLIC_KEY)
+        });
+      }
+
+      const json = sub.toJSON();
+      const { error } = await supabaseClient.from('push_subscriptions').upsert({
+        user_id: user.id,
+        endpoint: json.endpoint,
+        p256dh: json.keys.p256dh,
+        auth: json.keys.auth,
+        last_sent_on: null
+      }, { onConflict: 'user_id,endpoint' });
+
+      if (error) {
+        console.error(error);
+        status.textContent = 'Impossible d’enregistrer cet appareil.';
+        return;
+      }
+      await refresh();
+    } catch (e) {
+      console.error(e);
+      status.textContent = 'Activation impossible : ' + (e && e.message ? e.message : 'erreur inconnue');
+    }
+  }
+
+  async function disable() {
+    try {
+      const sub = await currentSubscription();
+      if (sub) {
+        const endpoint = sub.endpoint;
+        await sub.unsubscribe();
+        await supabaseClient.from('push_subscriptions').delete().eq('endpoint', endpoint);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    await refresh();
+  }
+
+  async function testNow() {
+    status.textContent = 'Envoi du rappel…';
+    try {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (!session) { status.textContent = 'Connecte-toi pour continuer.'; return; }
+
+      const { data, error } = await supabaseClient.functions.invoke('send-reminders', {
+        body: { test: true },
+        headers: { Authorization: 'Bearer ' + session.access_token }
+      });
+      if (error) throw error;
+
+      status.textContent = data && data.sent > 0
+        ? '✅ Rappel envoyé : regarde tes notifications.'
+        : 'Aucun rappel envoyé (' + JSON.stringify(data) + ').';
+    } catch (e) {
+      console.error(e);
+      status.textContent = 'L’envoi a échoué. Réessaie dans un instant.';
+    }
+  }
+
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    if (session && (event === 'INITIAL_SESSION' || event === 'SIGNED_IN')) setTimeout(refresh, 0);
+  });
+
+  refresh();
+})();
+</script>
 </body></html>
