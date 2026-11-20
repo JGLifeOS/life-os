@@ -2323,4 +2323,282 @@ function showAiActions(actions) {
   });
 })();
 </script>
+  <script>
+// Documents v1 : dépôt, liste, ouverture (lien temporaire) et suppression de documents privés
+(function () {
+  const section = [...document.querySelectorAll('section.card')]
+    .find(s => (s.querySelector('h2')?.textContent || '').includes('Mes documents'));
+  if (!section) return;
+
+  const BUCKET = 'life-documents';
+  const MAX_SIZE = 20 * 1024 * 1024; // 20 Mo
+  const categories = ['Factures', 'Contrats', 'Identité', 'Santé', 'Logement', 'Impôts', 'Autre'];
+  let docs = [];
+
+  section.replaceChildren();
+
+  const heading = document.createElement('h2');
+  heading.textContent = '▣ Mes documents';
+
+  const intro = document.createElement('p');
+  intro.className = 'muted';
+  intro.textContent = 'Tes documents sont privés : ils sont rangés dans un dossier à ton nom et ne s\u2019ouvrent que par un lien temporaire.';
+
+  // Formulaire de dépôt
+  const form = document.createElement('form');
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.pdf,.png,.jpg,.jpeg,.webp,.heic,.doc,.docx,.xls,.xlsx,.txt';
+  fileInput.style.marginBottom = '10px';
+
+  const titleInput = document.createElement('input');
+  titleInput.type = 'text';
+  titleInput.placeholder = 'Titre du document';
+  titleInput.maxLength = 120;
+  titleInput.required = true;
+
+  const categorySelect = document.createElement('select');
+  categories.forEach(c => {
+    const option = document.createElement('option');
+    option.value = c;
+    option.textContent = c;
+    categorySelect.appendChild(option);
+  });
+
+  const submitBtn = document.createElement('button');
+  submitBtn.type = 'submit';
+  submitBtn.textContent = 'Déposer le document';
+  submitBtn.style.display = 'block';
+  submitBtn.style.marginTop = '10px';
+
+  form.append(fileInput, titleInput, categorySelect, submitBtn);
+
+  // Recherche et filtre
+  const searchRow = document.createElement('div');
+  searchRow.style.marginTop = '16px';
+
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.placeholder = 'Rechercher un document…';
+
+  const filterSelect = document.createElement('select');
+  const allOption = document.createElement('option');
+  allOption.value = '';
+  allOption.textContent = 'Toutes les catégories';
+  filterSelect.appendChild(allOption);
+  categories.forEach(c => {
+    const option = document.createElement('option');
+    option.value = c;
+    option.textContent = c;
+    filterSelect.appendChild(option);
+  });
+
+  searchRow.append(searchInput, filterSelect);
+
+  const status = document.createElement('p');
+  status.className = 'muted';
+  const listBox = document.createElement('div');
+
+  section.append(heading, intro, form, searchRow, status, listBox);
+
+  // Titre proposé automatiquement à partir du nom du fichier
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (file && !titleInput.value.trim()) {
+      const dot = file.name.lastIndexOf('.');
+      titleInput.value = (dot > 0 ? file.name.slice(0, dot) : file.name).slice(0, 120);
+    }
+  });
+
+  // Affichage de la liste
+  function renderDocs() {
+    listBox.replaceChildren();
+
+    const query = searchInput.value.trim().toLowerCase();
+    const category = filterSelect.value;
+    const visible = docs.filter(d =>
+      (!category || d.category === category) &&
+      (!query || (d.title || '').toLowerCase().includes(query))
+    );
+
+    if (visible.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = docs.length === 0
+        ? "Aucun document pour le moment."
+        : 'Aucun document ne correspond à ta recherche.';
+      listBox.appendChild(empty);
+      return;
+    }
+
+    visible.forEach(doc => {
+      const row = document.createElement('div');
+      row.className = 'task';
+
+      const text = document.createElement('span');
+      text.textContent = (doc.title || 'Sans titre') + ' — ' + (doc.category || 'Autre') + ' — ' +
+        new Date(doc.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.textContent = 'Ouvrir';
+      openBtn.addEventListener('click', async () => {
+        const w = window.open('', '_blank');
+        if (!w) {
+          status.textContent = "Ton navigateur a bloqué l'ouverture : autorise les fenêtres pop-up pour ce site.";
+          return;
+        }
+        const { data, error } = await supabaseClient.storage
+          .from(BUCKET).createSignedUrl(doc.file_path, 120);
+        if (error || !data) {
+          console.error(error);
+          w.close();
+          status.textContent = "Impossible d'ouvrir ce document.";
+          return;
+        }
+        status.textContent = '';
+        w.location.href = data.signedUrl;
+      });
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'delete';
+      del.textContent = 'Supprimer';
+      del.addEventListener('click', async () => {
+        if (!confirm('Supprimer « ' + (doc.title || 'ce document') + ' » ? Le fichier sera effacé définitivement.')) return;
+
+        const { error: storageError } = await supabaseClient.storage
+          .from(BUCKET).remove([doc.file_path]);
+        if (storageError) {
+          console.error(storageError);
+          status.textContent = 'Impossible de supprimer le fichier.';
+          return;
+        }
+
+        const { error } = await supabaseClient.from('documents').delete().eq('id', doc.id);
+        if (error) {
+          console.error(error);
+          status.textContent = 'Erreur de suppression.';
+          return;
+        }
+
+        status.textContent = '✅ Document supprimé.';
+        await loadDocs();
+      });
+
+      row.append(text, openBtn, del);
+      listBox.appendChild(row);
+    });
+  }
+
+  searchInput.addEventListener('input', renderDocs);
+  filterSelect.addEventListener('change', renderDocs);
+
+  // Chargement
+  async function loadDocs() {
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) {
+      docs = [];
+      renderDocs();
+      return;
+    }
+
+    const { data, error } = await supabaseClient
+      .from('documents')
+      .select('id, title, category, file_path, created_at')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error(error);
+      status.textContent = 'Impossible de charger les documents.';
+      return;
+    }
+
+    docs = data || [];
+    renderDocs();
+  }
+
+  // Dépôt d'un document
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+
+    const file = fileInput.files && fileInput.files[0];
+    const title = titleInput.value.trim();
+
+    if (!file) {
+      status.textContent = 'Choisis un fichier à déposer.';
+      return;
+    }
+    if (file.size > MAX_SIZE) {
+      status.textContent = 'Fichier trop lourd : 20 Mo maximum.';
+      return;
+    }
+    if (!title) return;
+
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) {
+      status.textContent = 'Connecte-toi pour déposer un document.';
+      return;
+    }
+
+    const dot = file.name.lastIndexOf('.');
+    const ext = dot > -1
+      ? file.name.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8)
+      : '';
+    const path = user.id + '/' + crypto.randomUUID() + '.' + (ext || 'bin');
+
+    submitBtn.disabled = true;
+    status.textContent = 'Envoi en cours…';
+
+    const upload = await supabaseClient.storage.from(BUCKET).upload(path, file, {
+      contentType: file.type || 'application/octet-stream',
+      upsert: false
+    });
+
+    if (upload.error) {
+      console.error(upload.error);
+      status.textContent = "Impossible d'envoyer le fichier.";
+      submitBtn.disabled = false;
+      return;
+    }
+
+    const { error } = await supabaseClient.from('documents').insert({
+      user_id: user.id,
+      title,
+      category: categorySelect.value,
+      file_path: path
+    });
+
+    if (error) {
+      console.error(error);
+      await supabaseClient.storage.from(BUCKET).remove([path]);
+      status.textContent = "Impossible d'enregistrer le document.";
+      submitBtn.disabled = false;
+      return;
+    }
+
+    form.reset();
+    submitBtn.disabled = false;
+    status.textContent = '✅ Document déposé.';
+    await loadDocs();
+  });
+
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    if (session && (event === 'INITIAL_SESSION' || event === 'SIGNED_IN')) {
+      setTimeout(loadDocs, 0);
+    }
+    if (!session) {
+      docs = [];
+      renderDocs();
+    }
+  });
+
+  supabaseClient.auth.getSession().then(({ data }) => {
+    if (data && data.session) loadDocs();
+  });
+
+  renderDocs();
+})();
+</script>
 </body></html>
