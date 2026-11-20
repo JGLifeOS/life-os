@@ -3211,4 +3211,201 @@ function showAiActions(actions) {
   renderDocs();
 })();
 </script>
+  <script>
+// Voix v1 : dicter une question (micro) et écouter la réponse (lecture à voix haute)
+(function () {
+  const card = document.getElementById('life-ai');
+  const input = document.getElementById('aiQuestion');
+  const answerBox = document.getElementById('aiResponse');
+  if (!card || !input || !answerBox) return;
+
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const canSpeak = 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
+
+  // Barre de commandes vocales, placée juste avant la réponse
+  const bar = document.createElement('div');
+  bar.style.margin = '10px 0';
+
+  const note = document.createElement('p');
+  note.className = 'muted';
+  note.style.margin = '6px 0 0';
+
+  let micBtn = null;
+  let listening = false;
+  let recognition = null;
+  let heardText = '';
+  let askedByVoice = false;
+  let pendingSpeak = false;
+
+  // Préférence « toujours lire les réponses » (facultatif : sans stockage, ça marche quand même)
+  const KEY = 'elnovia_read_aloud';
+  let readAlways = false;
+  try { readAlways = localStorage.getItem(KEY) === '1'; } catch (_) {}
+
+  // ---------- Écouter la réponse ----------
+  let stopBtn = null;
+
+  function cleanForSpeech(t) {
+    return String(t || '')
+      .replace(/[*_`#>]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function frenchVoice() {
+    const voices = window.speechSynthesis.getVoices() || [];
+    return voices.find(v => (v.lang || '').toLowerCase().startsWith('fr')) || null;
+  }
+
+  function speak(text) {
+    if (!canSpeak) return;
+    const clean = cleanForSpeech(text);
+    if (!clean) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(clean);
+    u.lang = 'fr-FR';
+    const v = frenchVoice();
+    if (v) u.voice = v;
+    u.rate = 1;
+    u.onstart = () => { if (stopBtn) stopBtn.style.display = ''; };
+    u.onend = u.onerror = () => { if (stopBtn) stopBtn.style.display = 'none'; };
+    window.speechSynthesis.speak(u);
+  }
+
+  // Sur iPhone, la voix doit être « débloquée » par un vrai clic avant de parler
+  function primeSpeech() {
+    if (!canSpeak) return;
+    try {
+      const u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0;
+      window.speechSynthesis.speak(u);
+    } catch (_) {}
+  }
+
+  // ---------- Dicter une question ----------
+  function setMic(on) {
+    listening = on;
+    if (micBtn) micBtn.textContent = on ? '⏹ Arrêter' : '🎤 Parler';
+  }
+
+  function startListening() {
+    if (!SpeechRec) return;
+    primeSpeech();
+    if (canSpeak) window.speechSynthesis.cancel();
+
+    recognition = new SpeechRec();
+    recognition.lang = 'fr-FR';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    heardText = '';
+    note.textContent = '🎤 Je t’écoute… parle maintenant.';
+
+    recognition.onresult = ev => {
+      let text = '';
+      for (let i = 0; i < ev.results.length; i++) text += ev.results[i][0].transcript;
+      heardText = text.trim();
+      input.value = heardText;
+    };
+
+    recognition.onerror = ev => {
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+        note.textContent = 'Le micro est bloqué. Autorise-le pour ce site dans les réglages du navigateur, puis réessaie.';
+      } else if (ev.error === 'no-speech') {
+        note.textContent = 'Je n’ai rien entendu. Réessaie en parlant un peu plus près.';
+      } else if (ev.error !== 'aborted') {
+        note.textContent = 'La dictée a échoué. Tu peux aussi utiliser le micro du clavier.';
+      }
+    };
+
+    recognition.onend = () => {
+      setMic(false);
+      if (heardText) {
+        note.textContent = '';
+        askedByVoice = true;
+        window.askLifeAI(); // envoie la question dictée (tu peux aussi corriger puis cliquer Envoyer)
+      }
+    };
+
+    try {
+      recognition.start();
+      setMic(true);
+    } catch (e) {
+      console.error(e);
+      setMic(false);
+      note.textContent = 'Impossible de démarrer le micro.';
+    }
+  }
+
+  if (SpeechRec) {
+    micBtn = document.createElement('button');
+    micBtn.type = 'button';
+    micBtn.textContent = '🎤 Parler';
+    micBtn.addEventListener('click', () => {
+      if (listening && recognition) { recognition.stop(); return; }
+      startListening();
+    });
+    bar.appendChild(micBtn);
+  } else {
+    note.textContent = 'La dictée n’est pas disponible dans ce navigateur : utilise le micro du clavier de ton téléphone.';
+  }
+
+  if (canSpeak) {
+    const label = document.createElement('label');
+    label.style.marginLeft = '12px';
+    label.style.cursor = 'pointer';
+
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = readAlways;
+    box.style.width = 'auto';
+    box.style.marginRight = '6px';
+    box.addEventListener('change', () => {
+      readAlways = box.checked;
+      try { localStorage.setItem(KEY, readAlways ? '1' : '0'); } catch (_) {}
+      if (!readAlways) window.speechSynthesis.cancel();
+      else primeSpeech();
+    });
+
+    label.append(box, document.createTextNode('🔊 Toujours lire les réponses'));
+    bar.appendChild(label);
+
+    stopBtn = document.createElement('button');
+    stopBtn.type = 'button';
+    stopBtn.textContent = '🔇 Stop';
+    stopBtn.style.display = 'none';
+    stopBtn.style.marginLeft = '12px';
+    stopBtn.addEventListener('click', () => {
+      window.speechSynthesis.cancel();
+      stopBtn.style.display = 'none';
+    });
+    bar.appendChild(stopBtn);
+  }
+
+  bar.appendChild(note);
+  answerBox.parentNode.insertBefore(bar, answerBox);
+
+  // ---------- Lecture automatique de la réponse ----------
+  // On entoure askLifeAI : à chaque envoi, la prochaine réponse affichée peut être lue.
+  const originalAsk = window.askLifeAI;
+  window.askLifeAI = function () {
+    primeSpeech();
+    pendingSpeak = readAlways || askedByVoice;
+    askedByVoice = false;
+    return originalAsk.apply(this, arguments);
+  };
+
+  new MutationObserver(() => {
+    if (!pendingSpeak) return;
+    const text = answerBox.textContent.trim();
+    if (!text || text.includes('réfléchit')) return; // réponse pas encore arrivée
+    pendingSpeak = false;
+    speak(text);
+  }).observe(answerBox, { childList: true, characterData: true, subtree: true });
+
+  // Touche Entrée dans le champ = envoyer
+  input.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); window.askLifeAI(); }
+  });
+})();
+</script>
 </body></html>
