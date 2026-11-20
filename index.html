@@ -198,5 +198,113 @@ if (!window.location.href.includes("type=recovery")) {
   document.getElementById("loginScreen").style.display = "block";
 });
 </script>
+<script>
+// Scanner un ticket : lit une photo de ticket et pré-remplit le formulaire de dépense
+(function () {
+  const section = [...document.querySelectorAll('section.card')]
+    .find(s => (s.querySelector('h2')?.textContent || '').includes('Mes finances'));
+  const form = section && section.querySelector('form');
+  if (!form) return;
+
+  const labelInput = form.querySelector('input[type="text"]');
+  const amountInput = form.querySelector('input[inputmode="decimal"]');
+  const categorySelect = form.querySelector('select');
+  const dateInput = form.querySelector('input[type="date"]');
+
+  const wrapper = document.createElement('div');
+  wrapper.style.margin = '12px 0';
+
+  const scanBtn = document.createElement('button');
+  scanBtn.type = 'button';
+  scanBtn.textContent = '📷 Scanner un ticket';
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'image/*';
+  fileInput.style.display = 'none';
+
+  const scanStatus = document.createElement('p');
+  scanStatus.className = 'muted';
+
+  wrapper.append(scanBtn, fileInput, scanStatus);
+  form.before(wrapper);
+
+  scanBtn.addEventListener('click', () => fileInput.click());
+
+  // Réduit la photo (1600 px maximum) pour un envoi rapide
+  function toSmallJpeg(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const max = 1600;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Image illisible'));
+      };
+      img.src = url;
+    });
+  }
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files && fileInput.files[0];
+    fileInput.value = '';
+    if (!file) return;
+
+    scanBtn.disabled = true;
+    scanStatus.textContent = 'Lecture du ticket…';
+
+    try {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (!session) {
+        scanStatus.textContent = 'Connecte-toi pour scanner un ticket.';
+        return;
+      }
+
+      const image = await toSmallJpeg(file);
+
+      const { data, error } = await supabaseClient.functions.invoke('ticket-ai', {
+        body: { image },
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+
+      if (error) throw error;
+
+      const ticket = data && data.ticket;
+      if (!ticket || !ticket.readable) {
+        scanStatus.textContent = "Je n'ai pas pu lire le montant : essaie une photo plus nette, bien à plat et bien éclairée.";
+        return;
+      }
+
+      labelInput.value = ticket.label || '';
+      amountInput.value = String(ticket.amount).replace('.', ',');
+      if ([...categorySelect.options].some(o => o.value === ticket.category)) {
+        categorySelect.value = ticket.category;
+      }
+      if (ticket.spent_on) dateInput.value = ticket.spent_on;
+
+      scanStatus.textContent = '📷 Ticket lu : vérifie les champs, choisis où l\u2019ajouter, puis clique sur « Ajouter la dépense ».';
+    } catch (error) {
+      console.error('Erreur scan ticket :', error);
+      let message = 'Impossible de lire le ticket pour le moment.';
+      try {
+        const details = await error.context.json();
+        if (error.context.status === 429 && details && details.error) message = details.error;
+      } catch (_) {}
+      scanStatus.textContent = message;
+    } finally {
+      scanBtn.disabled = false;
+    }
+  });
+})();
+</script>
 
 </body></html>
