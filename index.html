@@ -2607,4 +2607,251 @@ function showAiActions(actions) {
   renderDocs();
 })();
 </script>
+  <script>
+// Version 5 : l'IA peut retrouver un document et proposer de l'ouvrir
+function showAiActions(actions) {
+  const box = document.getElementById('aiActions');
+  box.replaceChildren();
+
+  const categories = ['Personnel', 'Travail', 'Sport', 'Finances', 'Autre'];
+  const expenseCategories = ['Courses', 'Logement', 'Transport', 'Loisirs', 'Santé', 'Abonnements', 'Autre'];
+  const priorities = ['low', 'medium', 'high', 'urgent'];
+  const statuses = ['todo', 'in_progress', 'done'];
+  const statusLabels = { todo: 'à faire', in_progress: 'en cours', done: 'terminée' };
+  const priorityLabels = { low: 'basse', medium: 'normale', high: 'haute', urgent: 'urgente' };
+  const dateOk = d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
+  const fmt = d => new Date(d + 'T12:00:00').toLocaleDateString('fr-FR', {
+    weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric'
+  });
+  const euro = n => n.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+  const now = new Date();
+  const todayKey = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')
+  ].join('-');
+
+  // Espaces connus de l'application (lus dans la liste déroulante du formulaire)
+  const knownSpaces = {};
+  document.querySelectorAll('#taskSpace option').forEach(o => {
+    if (o.value) knownSpaces[o.value] = o.textContent.replace('👥', '').trim();
+  });
+
+  const items = [];
+  const openItems = [];
+
+  (actions || []).forEach(a => {
+    if (!a) return;
+
+    if (a.type === 'create_task' && typeof a.title === 'string' && a.title.trim()) {
+      const title = a.title.trim().slice(0, 180);
+      const category = categories.includes(a.category) ? a.category : 'Personnel';
+      const spaceId = a.space_id && knownSpaces[a.space_id] ? a.space_id : null;
+      const row = {
+        title,
+        status: 'todo',
+        category,
+        priority: priorities.includes(a.priority) ? a.priority : 'medium',
+        due_date: dateOk(a.due_date) ? a.due_date + 'T12:00:00' : null,
+        space_id: spaceId
+      };
+      let text = '• Ajouter : ' + title + ' — ' + category;
+      if (spaceId) text += ' — 👥 ' + knownSpaces[spaceId];
+      if (dateOk(a.due_date)) text += ' — 📅 ' + fmt(a.due_date);
+      items.push({ kind: 'create', row, text });
+    }
+
+    if (a.type === 'update_task') {
+      const task = tasks.find(t => t.id === a.task_id);
+      if (!task) return;
+
+      const changes = {};
+      const parts = [];
+
+      if (statuses.includes(a.status)) {
+        changes.status = a.status;
+        parts.push('statut : ' + statusLabels[a.status]);
+      }
+      if (dateOk(a.due_date)) {
+        changes.due_date = a.due_date + 'T12:00:00';
+        parts.push('nouvelle date : ' + fmt(a.due_date));
+      }
+      if (categories.includes(a.category)) {
+        changes.category = a.category;
+        parts.push('catégorie : ' + a.category);
+      }
+      if (priorities.includes(a.priority)) {
+        changes.priority = a.priority;
+        parts.push('priorité : ' + priorityLabels[a.priority]);
+      }
+      if (typeof a.title === 'string' && a.title.trim()) {
+        changes.title = a.title.trim().slice(0, 180);
+        parts.push('nouveau titre : ' + changes.title);
+      }
+
+      if (parts.length === 0) return;
+
+      items.push({
+        kind: 'update',
+        id: task.id,
+        changes,
+        text: '• Modifier « ' + task.title + ' » — ' + parts.join(', ')
+      });
+    }
+
+    if (a.type === 'create_expense' && typeof a.title === 'string' && a.title.trim()) {
+      const amount = Number(a.amount);
+      if (!Number.isFinite(amount) || amount <= 0 || amount >= 1000000) return;
+
+      const label = a.title.trim().slice(0, 120);
+      const category = expenseCategories.includes(a.expense_category) ? a.expense_category : 'Autre';
+      const spent = dateOk(a.spent_on) ? a.spent_on : todayKey;
+      const rounded = Math.round(amount * 100) / 100;
+
+      items.push({
+        kind: 'expense',
+        row: { label, amount: rounded, category, spent_on: spent },
+        text: '• Noter la dépense : ' + label + ' — ' + euro(rounded) + ' — ' + category + ' — 📅 ' + fmt(spent)
+      });
+    }
+
+    if (a.type === 'open_document' && typeof a.document_id === 'string' && a.document_id) {
+      openItems.push({ id: a.document_id });
+    }
+  });
+
+  if (items.length === 0 && openItems.length === 0) return;
+
+  // Documents retrouvés : un bouton « Ouvrir » (lien temporaire de 2 minutes)
+  if (openItems.length > 0) {
+    const docHeading = document.createElement('p');
+    docHeading.textContent = 'Document trouvé :';
+    box.appendChild(docHeading);
+
+    openItems.forEach(o => {
+      const line = document.createElement('p');
+      o.label = document.createElement('span');
+      o.label.textContent = '📄 Recherche du document… ';
+      o.button = document.createElement('button');
+      o.button.type = 'button';
+      o.button.textContent = 'Ouvrir';
+      o.button.style.marginLeft = '8px';
+
+      o.button.addEventListener('click', async () => {
+        const w = window.open('', '_blank');
+        if (!w) {
+          o.label.textContent = "Ton navigateur a bloqué l'ouverture : autorise les fenêtres pop-up pour ce site. ";
+          return;
+        }
+        const { data: doc, error } = await supabaseClient
+          .from('documents').select('file_path').eq('id', o.id).maybeSingle();
+        if (error || !doc) {
+          console.error(error);
+          w.close();
+          o.label.textContent = 'Document introuvable. ';
+          return;
+        }
+        const signed = await supabaseClient.storage
+          .from('life-documents').createSignedUrl(doc.file_path, 120);
+        if (signed.error || !signed.data) {
+          console.error(signed.error);
+          w.close();
+          o.label.textContent = "Impossible d'ouvrir ce document. ";
+          return;
+        }
+        w.location.href = signed.data.signedUrl;
+      });
+
+      line.append(o.label, o.button);
+      box.appendChild(line);
+    });
+
+    // On affiche le vrai titre enregistré, pas celui écrit par l'IA
+    supabaseClient.from('documents').select('id, title, category')
+      .in('id', openItems.map(o => o.id))
+      .then(({ data }) => {
+        const found = new Map((data || []).map(d => [d.id, d]));
+        openItems.forEach(o => {
+          const d = found.get(o.id);
+          if (d) {
+            o.label.textContent = '📄 ' + (d.title || 'Sans titre') + ' — ' + (d.category || 'Autre') + ' ';
+          } else {
+            o.label.textContent = 'Document introuvable. ';
+            o.button.remove();
+          }
+        });
+      });
+  }
+
+  if (items.length === 0) return;
+
+  const heading = document.createElement('p');
+  heading.textContent = 'Actions proposées :';
+  box.appendChild(heading);
+
+  items.forEach(item => {
+    const line = document.createElement('p');
+    line.textContent = item.text;
+    box.appendChild(line);
+  });
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.type = 'button';
+  confirmBtn.textContent = '✅ Confirmer';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.textContent = 'Annuler';
+  cancelBtn.style.marginLeft = '8px';
+
+  cancelBtn.addEventListener('click', () => {
+    box.replaceChildren();
+    document.getElementById('aiResponse').textContent = 'Actions annulées.';
+  });
+
+  confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true;
+    let failed = 0;
+
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) {
+      alert('Connecte-toi pour continuer.');
+      confirmBtn.disabled = false;
+      return;
+    }
+
+    const creations = items.filter(i => i.kind === 'create')
+      .map(i => ({ ...i.row, user_id: user.id }));
+
+    if (creations.length) {
+      const { error } = await supabaseClient.from('tasks').insert(creations);
+      if (error) { console.error(error); failed += creations.length; }
+    }
+
+    for (const item of items.filter(i => i.kind === 'update')) {
+      const { error } = await supabaseClient
+        .from('tasks').update(item.changes).eq('id', item.id);
+      if (error) { console.error(error); failed += 1; }
+    }
+
+    const expenseRows = items.filter(i => i.kind === 'expense')
+      .map(i => ({ ...i.row, user_id: user.id }));
+
+    if (expenseRows.length) {
+      const { error } = await supabaseClient.from('expenses').insert(expenseRows);
+      if (error) { console.error(error); failed += expenseRows.length; }
+    }
+
+    box.replaceChildren();
+    document.getElementById('aiResponse').textContent = failed
+      ? '⚠️ ' + failed + ' action(s) ont échoué.'
+      : '✅ ' + items.length + ' action(s) effectuée(s).';
+
+    await loadTasks();
+    if (window.refreshExpenses) await window.refreshExpenses();
+  });
+
+  box.append(confirmBtn, cancelBtn);
+}
+</script>
 </body></html>
