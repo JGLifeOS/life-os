@@ -5803,4 +5803,142 @@ function showAiActions(actions) {
   new MutationObserver(install).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
+  <script>
+// Interface v1 : barre d'onglets en bas, une zone à la fois, style plus léger
+(function () {
+  if (window.__elnoviaUi) return;
+  window.__elnoviaUi = true;
+
+  const app = document.getElementById('appContent');
+  if (!app) return;
+
+  const TABS = [
+    { id: 'home', icon: '🏠', label: 'Accueil' },
+    { id: 'tasks', icon: '✓', label: 'Tâches' },
+    { id: 'money', icon: '💶', label: 'Argent' },
+    { id: 'docs', icon: '📄', label: 'Documents' },
+    { id: 'assistant', icon: '✦', label: 'Assistant' },
+    { id: 'more', icon: '⋯', label: 'Plus' }
+  ];
+
+  // ---------- Style ----------
+  const style = document.createElement('style');
+  style.textContent = `
+    body{background:#0a0e1c;padding-bottom:calc(84px + env(safe-area-inset-bottom));-webkit-tap-highlight-color:transparent}
+    header{padding:14px 20px;background:transparent;border-bottom:0;display:flex;align-items:center;justify-content:space-between}
+    header small{display:none}
+    .logo{font-size:20px;letter-spacing:3px}
+    main{padding:6px 14px 12px}
+    .card{background:#121a2f;border:1px solid #1f2945;border-radius:22px;padding:18px;margin:12px 0;box-shadow:0 6px 20px rgba(0,0,0,.18)}
+    .card.gradient{border:0}
+    h2{font-size:17px;margin:0 0 12px;letter-spacing:.2px}
+    .card button{border-radius:12px}
+    .card input[type=text],.card input[type=number],.card input[type=date],.card input[type=time],.card select{border-radius:12px}
+    h1{font-size:25px;margin:6px 0 4px}
+    body:not(.eln-home) main > small,body:not(.eln-home) main > h1,body:not(.eln-home) main > p.muted{display:none}
+    .card select{background:#0b1224;color:#f7f8ff;border:1px solid #35415e;padding:10px 12px;font-size:15px;max-width:100%}
+    .card input[type=file]{color:#a9b3cf;max-width:100%;font-size:14px}
+    .card input[type=file]::file-selector-button{background:#2a3454;color:#fff;border:0;border-radius:10px;padding:8px 12px;margin-right:10px;font-weight:600}
+    .card input[type=date],.card input[type=time],.card input[type=number]{background:#0b1224;color:#f7f8ff;border:1px solid #35415e;padding:10px 12px;font-size:15px}
+    footer{padding:10px 0 20px;font-size:12px;opacity:.6}
+    .eln-hidden{display:none !important}
+    #elnTabs{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;justify-content:space-around;
+      background:rgba(14,19,36,.94);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+      border-top:1px solid #1f2945;padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
+    #elnTabs button{flex:1;background:transparent;color:#8390b3;padding:6px 2px;border-radius:12px;
+      display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;font-weight:600}
+    #elnTabs button span.i{font-size:20px;line-height:1.1}
+    #elnTabs button.on{color:#c4b5ff}
+    #elnTabs button.on span.i{transform:translateY(-1px)}
+    @media (min-width:700px){#elnTabs{left:50%;right:auto;transform:translateX(-50%);width:650px;border-radius:20px 20px 0 0;border:1px solid #1f2945;border-bottom:0}}
+  `;
+  document.head.appendChild(style);
+
+  // ---------- Quelle carte va dans quel onglet ----------
+  const BY_ID = {
+    todayCard: 'home', calendarSection: 'tasks', recapSection: 'money', budgetSection: 'money',
+    inboxSection: 'docs', 'life-ai': 'assistant', backupSection: 'more', pushSection: 'more', spacesSection: 'more'
+  };
+  function tabOf(card) {
+    if (card.id && BY_ID[card.id]) return BY_ID[card.id];
+    const t = (card.querySelector('h2')?.textContent || '').toLowerCase();
+    if (t.includes('elnovia ai')) return 'assistant';
+    if (t.includes('tâche') || t.includes('calendrier')) return 'tasks';
+    if (t.includes('financ') || t.includes('bilan') || t.includes('budget')) return 'money';
+    if (t.includes('document') || t.includes('trier')) return 'docs';
+    return 'more';
+  }
+
+  let active = 'home';
+  try {
+    const saved = localStorage.getItem('elnoviaTab');
+    if (TABS.some(t => t.id === saved)) active = saved;
+  } catch (e) { /* ignoré */ }
+
+  function applyTabs() {
+    app.querySelectorAll('section.card').forEach(card => {
+      const tab = tabOf(card);
+      card.dataset.tab = tab;
+      card.classList.toggle('eln-hidden', tab !== active);
+    });
+    document.body.classList.toggle('eln-home', active === 'home');
+    nav.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === active));
+  }
+
+  function setTab(id, scrollTop) {
+    if (!TABS.some(t => t.id === id)) return;
+    active = id;
+    try { localStorage.setItem('elnoviaTab', id); } catch (e) { /* ignoré */ }
+    applyTabs();
+    if (scrollTop) window.scrollTo(0, 0);
+  }
+
+  // ---------- Barre d'onglets ----------
+  const nav = document.createElement('nav');
+  nav.id = 'elnTabs';
+  TABS.forEach(t => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.tab = t.id;
+    const i = document.createElement('span');
+    i.className = 'i';
+    i.textContent = t.icon;
+    const l = document.createElement('span');
+    l.textContent = t.label;
+    b.append(i, l);
+    b.addEventListener('click', () => setTab(t.id, true));
+    nav.appendChild(b);
+  });
+  app.appendChild(nav);
+
+  // ---------- Si un bouton veut montrer ou activer un élément caché, on ouvre son onglet ----------
+  function reveal(el) {
+    try {
+      const card = el && el.closest ? el.closest('section.card') : null;
+      if (card && card.classList.contains('eln-hidden')) setTab(card.dataset.tab || tabOf(card), false);
+    } catch (e) { /* ignoré */ }
+  }
+  ['focus', 'click'].forEach(name => {
+    const original = HTMLElement.prototype[name];
+    HTMLElement.prototype[name] = function () { reveal(this); return original.apply(this, arguments); };
+  });
+  const originalScroll = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = function () { reveal(this); return originalScroll.apply(this, arguments); };
+
+  document.addEventListener('click', ev => {
+    const a = ev.target.closest && ev.target.closest('a[href="#life-ai"]');
+    if (a) setTab('assistant', false);
+  }, true);
+
+  // ---------- Nouvelles cartes ajoutées par l'application ----------
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; applyTabs(); });
+  }).observe(app, { childList: true, subtree: true });
+
+  applyTabs();
+})();
+</script>
 </body></html>
