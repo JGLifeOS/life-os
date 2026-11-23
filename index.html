@@ -6238,7 +6238,7 @@ function showAiActions(actions) {
   }).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
-  <script>
+<script>
 // Finances v2 : total en grand, catégories en barres, dépenses allégées, formulaire replié
 (function () {
   const style = document.createElement('style');
@@ -6253,7 +6253,7 @@ function showAiActions(actions) {
     .fin-cat .b{height:6px;border-radius:6px;background:#1c2542;margin-top:5px;overflow:hidden}
     .fin-cat .b i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,#7659ed,#a58bff)}
     .fin-row{gap:10px;padding:12px 0}
-    .fin-row > span{font-size:16px;line-height:1.3}
+    .fin-row > span:first-child{flex:1;min-width:0;font-size:16px;line-height:1.3}
     .fin-row > span small{display:block;margin-top:3px;font-size:12px}
     .fin-row .amt{font-weight:700;white-space:nowrap}
     .fin-row .delete{font-size:16px;padding:6px 8px}
@@ -6354,7 +6354,9 @@ function showAiActions(actions) {
       const date = dm ? Number(dm[1]) + ' ' + MONTHS[Number(dm[2]) - 1] : '';
       const who = parts[i + 2] === 'par un autre membre' ? 'par un autre membre' : '';
 
-      label.textContent = title;
+      // On retire les dates écrites dans le titre (ex. « 18/11/2026 »)
+      const cleaned = title.replace(/\s*\b\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}\b/g, '').replace(/\s{2,}/g, ' ').trim();
+      label.textContent = cleaned || title;
       const small = document.createElement('small');
       small.className = 'muted';
       small.textContent = [category, date, who].filter(Boolean).join(' · ');
