@@ -6238,4 +6238,144 @@ function showAiActions(actions) {
   }).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
+  <script>
+// Finances v2 : total en grand, catégories en barres, dépenses allégées, formulaire replié
+(function () {
+  const style = document.createElement('style');
+  style.textContent = `
+    .fin-total{margin:14px 0 4px}
+    .fin-total small{display:block;font-size:13px;text-transform:capitalize}
+    .fin-total strong{display:block;font-size:34px;line-height:1.15;font-weight:800;letter-spacing:-.5px}
+    .fin-cats{margin:10px 0 6px}
+    .fin-cat{margin:9px 0}
+    .fin-cat .l{display:flex;justify-content:space-between;font-size:15px}
+    .fin-cat .l span:last-child{color:#a9b3cf}
+    .fin-cat .b{height:6px;border-radius:6px;background:#1c2542;margin-top:5px;overflow:hidden}
+    .fin-cat .b i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,#7659ed,#a58bff)}
+    .fin-row{gap:10px;padding:12px 0}
+    .fin-row > span{font-size:16px;line-height:1.3}
+    .fin-row > span small{display:block;margin-top:3px;font-size:12px}
+    .fin-row .amt{font-weight:700;white-space:nowrap}
+    .fin-row .delete{font-size:16px;padding:6px 8px}
+    details.eln-fold{margin:14px 0 4px}
+    details.eln-fold > summary{cursor:pointer;font-weight:600;color:#c4b5ff;padding:6px 0}
+    details.eln-fold > *:not(summary){margin-top:8px}
+  `;
+  document.head.appendChild(style);
+
+  const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+  const num = t => Number(String(t).replace(/[^\d,.-]/g, '').replace(',', '.')) || 0;
+
+  function run() {
+    const card = [...document.querySelectorAll('section.card')]
+      .find(s => (s.querySelector('h2')?.textContent || '').includes('Mes finances'));
+    if (!card) return;
+
+    // 1) formulaire d'ajout replié (il s'ouvre tout seul après la lecture d'un ticket)
+    const form = card.querySelector(':scope > form');
+    if (form && !card.dataset.folded) {
+      card.dataset.folded = '1';
+      const d = document.createElement('details');
+      d.className = 'eln-fold';
+      d.id = 'finFormFold';
+      const s = document.createElement('summary');
+      s.textContent = '➕ Ajouter une dépense';
+      d.appendChild(s);
+      form.parentNode.insertBefore(d, form);
+      d.appendChild(form);
+    }
+    const fold = document.getElementById('finFormFold');
+    if (fold && /Ticket lu/.test(card.textContent)) fold.open = true;
+
+    // 2) total en grand + catégories en barres
+    card.querySelectorAll('p:not([data-c])').forEach(head => {
+      const m = /^Total de (.+?) \((.+?)\) : (.+)$/.exec(head.textContent.trim());
+      if (!m) return;
+      head.dataset.c = '1';
+      head.className = 'fin-total';
+      head.style.fontWeight = '';
+
+      const small = document.createElement('small');
+      small.className = 'muted';
+      small.textContent = m[1] + ' · ' + m[2];
+      const big = document.createElement('strong');
+      big.textContent = m[3];
+      head.textContent = '';
+      head.append(small, big);
+
+      const total = num(m[3]);
+      const cats = [];
+      let next = head.nextElementSibling;
+      const toRemove = [];
+      while (next && next.tagName === 'P' && next.textContent.trim().startsWith('• ')) {
+        const c = /^•\s*(.+?) : (.+)$/.exec(next.textContent.trim());
+        if (c) cats.push({ name: c[1], text: c[2], value: num(c[2]) });
+        toRemove.push(next);
+        next = next.nextElementSibling;
+      }
+      if (cats.length) {
+        const box = document.createElement('div');
+        box.className = 'fin-cats';
+        cats.forEach(c => {
+          const item = document.createElement('div');
+          item.className = 'fin-cat';
+          const l = document.createElement('div');
+          l.className = 'l';
+          const a = document.createElement('span'); a.textContent = c.name;
+          const b = document.createElement('span'); b.textContent = c.text;
+          l.append(a, b);
+          const bar = document.createElement('div');
+          bar.className = 'b';
+          const fill = document.createElement('i');
+          fill.style.width = Math.max(3, Math.min(100, total > 0 ? (c.value / total) * 100 : 0)) + '%';
+          bar.appendChild(fill);
+          item.append(l, bar);
+          box.appendChild(item);
+        });
+        head.after(box);
+        toRemove.forEach(n => n.remove());
+      }
+    });
+
+    // 3) lignes de dépenses
+    card.querySelectorAll('.task:not([data-c])').forEach(row => {
+      const label = row.querySelector(':scope > span');
+      if (!label) return;
+      row.dataset.c = '1';
+      const parts = label.textContent.split(' — ');
+      const i = parts.findIndex((p, k) => k >= 2 && p.includes('€'));
+      if (i < 2) return;
+
+      row.classList.add('fin-row');
+      const title = parts.slice(0, i - 1).join(' — ');
+      const category = parts[i - 1];
+      const amount = parts[i];
+      const dm = /^(\d{2})\/(\d{2})/.exec(parts[i + 1] || '');
+      const date = dm ? Number(dm[1]) + ' ' + MONTHS[Number(dm[2]) - 1] : '';
+      const who = parts[i + 2] === 'par un autre membre' ? 'par un autre membre' : '';
+
+      label.textContent = title;
+      const small = document.createElement('small');
+      small.className = 'muted';
+      small.textContent = [category, date, who].filter(Boolean).join(' · ');
+      label.appendChild(small);
+
+      const amt = document.createElement('span');
+      amt.className = 'amt';
+      amt.textContent = amount;
+      const del = row.querySelector('.delete');
+      row.insertBefore(amt, del || null);
+      if (del) { del.textContent = '🗑'; del.setAttribute('aria-label', 'Supprimer la dépense'); }
+    });
+  }
+
+  run();
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; run(); });
+  }).observe(document.body, { childList: true, subtree: true });
+})();
+</script>
 </body></html>
