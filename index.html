@@ -4018,4 +4018,393 @@ function showAiActions(actions) {
   refresh();
 })();
 </script>
+  // Scan v1 : photo ou PDF -> l'IA lit le document, propose le rangement, la dépense et la tâche d'échéance
+(function () {
+  const section = [...document.querySelectorAll('section.card')]
+    .find(s => (s.querySelector('h2')?.textContent || '').includes('Mes documents'));
+  if (!section) return;
+  const intro = section.querySelector('p.muted');
+  if (!intro) return;
+  if (document.getElementById('scanBox')) return;
+
+  const BUCKET = 'life-documents';
+  const CATEGORIES = ['Factures', 'Contrats', 'Identité', 'Santé', 'Logement', 'Impôts', 'Autre'];
+  const EXPENSE_CATEGORIES = ['Courses', 'Logement', 'Transport', 'Loisirs', 'Santé', 'Abonnements', 'Autre'];
+  const KINDS = ['ticket_paye', 'facture_a_payer', 'autre'];
+  const MAX_SIDE = 1800;              // taille max de la photo (pixels)
+  const MAX_PDF = 4 * 1024 * 1024;    // 4 Mo pour la lecture automatique d'un PDF
+  const LAST_SPACE_KEY = 'elnovia_scan_space';
+
+  let pending = null;      // fichier en attente de confirmation
+  let previewUrl = null;
+
+  const el = (tag, text, css) => {
+    const n = document.createElement(tag);
+    if (text) n.textContent = text;
+    if (css) n.style.cssText = css;
+    return n;
+  };
+
+  const labelled = (text, control) => {
+    const l = el('label', null, 'display:block;margin-top:10px;');
+    l.append(el('span', text, 'display:block;font-size:13px;opacity:.75;'), control);
+    return l;
+  };
+
+  const okDate = v =>
+    typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(new Date(v + 'T12:00:00')) ? v : '';
+  const okAmount = v =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 && v < 1000000 ? Math.round(v * 100) / 100 : null;
+  const ymd = d => d.toLocaleDateString('fr-CA');
+  const euro = n => n.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+
+  // Zone d'affichage
+  const box = el('div', null,
+    'margin:14px 0;padding:14px;border:1px dashed rgba(128,128,128,.55);border-radius:12px;');
+  box.id = 'scanBox';
+
+  const pickBtn = el('button', '📷 Scanner un document');
+  pickBtn.type = 'button';
+  pickBtn.style.width = '100%';
+
+  const hint = el('p', "Prends une photo (ticket, facture, courrier) ou choisis un PDF : l'IA le lit et te propose où le ranger.", 'margin:8px 0 0;font-size:13px;opacity:.75;');
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'image/*,application/pdf';
+  fileInput.style.display = 'none';
+
+  const status = el('p', '', 'margin:10px 0 0;');
+  const review = el('div');
+
+  box.append(pickBtn, hint, fileInput, status, review);
+  intro.after(box);
+
+  pickBtn.addEventListener('click', () => fileInput.click());
+
+  function busy(on, text) {
+    pickBtn.disabled = on;
+    if (text !== undefined) status.textContent = text;
+  }
+
+  function clearReview() {
+    review.replaceChildren();
+    if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+    pending = null;
+  }
+
+  const toBase64 = blob => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1]);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+
+  // Réduit la photo (1800 px, JPEG) : plus rapide, moins lourd, bien lisible
+  async function imageToJpeg(file) {
+    let source, w, h, url = null;
+    try {
+      source = await createImageBitmap(file);
+      w = source.width; h = source.height;
+    } catch (e) {
+      url = URL.createObjectURL(file);
+      source = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('image illisible'));
+        img.src = url;
+      });
+      w = source.naturalWidth; h = source.naturalHeight;
+    }
+    const ratio = Math.min(1, MAX_SIDE / Math.max(w, h));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(w * ratio));
+    canvas.height = Math.max(1, Math.round(h * ratio));
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+    if (url) URL.revokeObjectURL(url);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+    if (!blob) throw new Error('conversion impossible');
+    return blob;
+  }
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files && fileInput.files[0];
+    fileInput.value = '';
+    if (!file) return;
+
+    clearReview();
+    busy(true, 'Lecture du document par l’IA…');
+
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) { busy(false, 'Connecte-toi pour scanner un document.'); return; }
+
+    let blob, mime, ext;
+    try {
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+      const isImage = file.type.startsWith('image/') || /\.(heic|heif|jpe?g|png|webp)$/i.test(file.name);
+      if (isPdf) {
+        if (file.size > MAX_PDF) {
+          busy(false, 'PDF trop lourd pour la lecture automatique (4 Mo maximum). Utilise le formulaire « Déposer le document » plus bas.');
+          return;
+        }
+        blob = file; mime = 'application/pdf'; ext = 'pdf';
+      } else if (isImage) {
+        blob = await imageToJpeg(file); mime = 'image/jpeg'; ext = 'jpg';
+      } else {
+        busy(false, 'Format non pris en charge : choisis une photo ou un PDF.');
+        return;
+      }
+    } catch (e) {
+      console.error(e);
+      busy(false, 'Impossible de lire cette image avec ton navigateur. Essaie une autre photo.');
+      return;
+    }
+
+    pending = { blob, mime, ext, name: file.name };
+    if (mime.startsWith('image/')) previewUrl = URL.createObjectURL(blob);
+
+    let scan = null;
+    let note = '';
+    try {
+      const base64 = await toBase64(blob);
+      const { data, error } = await supabaseClient.functions.invoke('scan-document', {
+        body: { mime, base64 }
+      });
+      if (error) {
+        let msg = 'La lecture automatique a échoué.';
+        try {
+          const j = await error.context.json();
+          if (j && j.error) msg = j.error;
+        } catch (e2) { /* message par défaut */ }
+        throw new Error(msg);
+      }
+      scan = data && data.scan;
+      if (!scan) throw new Error('La lecture automatique a échoué.');
+    } catch (e) {
+      console.error(e);
+      note = e.message + ' Tu peux quand même ranger le document en remplissant les champs.';
+    }
+
+    busy(false, '');
+    showReview(scan, note);
+  });
+
+  async function showReview(rawScan, note) {
+    const fileBase = pending.name.replace(/\.[^.]+$/, '').slice(0, 120);
+
+    const s = {
+      readable: !!(rawScan && rawScan.readable),
+      title: rawScan ? String(rawScan.title || '').trim().slice(0, 120) : '',
+      category: rawScan && CATEGORIES.includes(rawScan.category) ? rawScan.category : 'Autre',
+      docDate: rawScan ? okDate(rawScan.doc_date) : '',
+      amount: rawScan ? okAmount(rawScan.amount) : null,
+      kind: rawScan && KINDS.includes(rawScan.kind) ? rawScan.kind : 'autre',
+      dueDate: rawScan ? okDate(rawScan.due_date) : '',
+      expenseCategory: rawScan && EXPENSE_CATEGORIES.includes(rawScan.expense_category) ? rawScan.expense_category : 'Autre',
+      summary: rawScan ? String(rawScan.summary || '').trim().slice(0, 300) : ''
+    };
+
+    review.replaceChildren();
+    review.style.marginTop = '12px';
+
+    if (previewUrl) {
+      const img = document.createElement('img');
+      img.src = previewUrl;
+      img.alt = 'Aperçu du document';
+      img.style.cssText = 'max-width:100%;max-height:200px;border-radius:8px;display:block;';
+      review.appendChild(img);
+    }
+
+    if (note) {
+      review.appendChild(el('p', '⚠️ ' + note, 'margin:10px 0 0;'));
+    } else if (!s.readable) {
+      review.appendChild(el('p', '⚠️ Je n’arrive pas à bien lire ce document. Tu peux le ranger en remplissant les champs.', 'margin:10px 0 0;'));
+    } else if (s.summary) {
+      review.appendChild(el('p', '🧠 ' + s.summary, 'margin:10px 0 0;'));
+    }
+
+    const titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.maxLength = 120;
+    titleInput.value = s.title || fileBase;
+
+    const categorySelect = document.createElement('select');
+    CATEGORIES.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c; o.textContent = c;
+      categorySelect.appendChild(o);
+    });
+    categorySelect.value = s.category;
+
+    const dateInput = document.createElement('input');
+    dateInput.type = 'date';
+    dateInput.value = s.docDate;
+
+    const amountInput = document.createElement('input');
+    amountInput.type = 'text';
+    amountInput.inputMode = 'decimal';
+    amountInput.placeholder = 'ex. 45,50';
+    amountInput.value = s.amount != null ? String(s.amount).replace('.', ',') : '';
+
+    // Où ranger : Perso ou un espace partagé
+    const spaceSelect = document.createElement('select');
+    const perso = document.createElement('option');
+    perso.value = ''; perso.textContent = 'Perso (privé)';
+    spaceSelect.appendChild(perso);
+    const sp = await supabaseClient.from('spaces').select('id, name').order('name');
+    (sp.data || []).forEach(x => {
+      const o = document.createElement('option');
+      o.value = x.id; o.textContent = '👥 ' + x.name;
+      spaceSelect.appendChild(o);
+    });
+    try {
+      const last = localStorage.getItem(LAST_SPACE_KEY);
+      if (last && [...spaceSelect.options].some(o => o.value === last)) spaceSelect.value = last;
+    } catch (e) { /* stockage indisponible */ }
+
+    review.append(
+      labelled('Titre', titleInput),
+      labelled('Catégorie', categorySelect),
+      labelled('Date du document (facultatif)', dateInput),
+      labelled('Montant en € (facultatif)', amountInput),
+      labelled('Où le ranger', spaceSelect)
+    );
+
+    // Option : noter la dépense
+    const expenseRow = el('label', null, 'display:block;margin-top:14px;');
+    const expenseCheck = document.createElement('input');
+    expenseCheck.type = 'checkbox';
+    expenseCheck.checked = s.kind === 'ticket_paye' && s.amount != null;
+    expenseRow.append(expenseCheck, ' Noter aussi cette dépense (' + s.expenseCategory + ')');
+
+    // Option : créer la tâche « payer avant … »
+    const taskRow = el('label', null, 'display:block;margin-top:10px;');
+    const taskCheck = document.createElement('input');
+    taskCheck.type = 'checkbox';
+    taskCheck.checked = s.kind === 'facture_a_payer' && !!s.dueDate;
+    taskRow.append(taskCheck, ' Créer une tâche pour la payer avant le :');
+
+    const dueInput = document.createElement('input');
+    dueInput.type = 'date';
+    dueInput.value = s.dueDate;
+    dueInput.style.marginTop = '6px';
+
+    review.append(expenseRow, taskRow, dueInput);
+
+    const saveBtn = el('button', '✅ Ranger le document');
+    saveBtn.type = 'button';
+    saveBtn.style.marginTop = '14px';
+
+    const cancelBtn = el('button', 'Annuler');
+    cancelBtn.type = 'button';
+    cancelBtn.style.cssText = 'margin-top:14px;margin-left:8px;';
+
+    review.append(saveBtn, cancelBtn);
+
+    cancelBtn.addEventListener('click', () => {
+      clearReview();
+      status.textContent = '';
+    });
+
+    saveBtn.addEventListener('click', async () => {
+      const title = titleInput.value.trim();
+      if (!title) { status.textContent = 'Donne un titre au document.'; return; }
+
+      const rawAmount = amountInput.value.trim();
+      let amount = null;
+      if (rawAmount) {
+        amount = okAmount(Number(rawAmount.replace(/\s/g, '').replace(',', '.')));
+        if (amount === null) { status.textContent = 'Montant invalide : écris par exemple 45,50.'; return; }
+      }
+      if (expenseCheck.checked && amount === null) {
+        status.textContent = 'Pour noter la dépense, indique le montant.';
+        return;
+      }
+      if (taskCheck.checked && !okDate(dueInput.value)) {
+        status.textContent = 'Pour créer la tâche, choisis la date limite.';
+        return;
+      }
+
+      const { data: { user } } = await supabaseClient.auth.getUser();
+      if (!user) { status.textContent = 'Connecte-toi pour ranger ce document.'; return; }
+
+      saveBtn.disabled = true;
+      cancelBtn.disabled = true;
+      status.textContent = 'Rangement en cours…';
+
+      const spaceId = spaceSelect.value || null;
+      const path = user.id + '/' + crypto.randomUUID() + '.' + pending.ext;
+
+      const upload = await supabaseClient.storage.from(BUCKET).upload(path, pending.blob, {
+        contentType: pending.mime,
+        upsert: false
+      });
+      if (upload.error) {
+        console.error(upload.error);
+        status.textContent = "Impossible d'envoyer le fichier.";
+        saveBtn.disabled = false; cancelBtn.disabled = false;
+        return;
+      }
+
+      const { error } = await supabaseClient.from('documents').insert({
+        user_id: user.id,
+        space_id: spaceId,
+        title,
+        category: categorySelect.value,
+        file_path: path,
+        summary: s.summary || null,
+        doc_date: okDate(dateInput.value) || null,
+        amount
+      });
+      if (error) {
+        console.error(error);
+        await supabaseClient.storage.from(BUCKET).remove([path]);
+        status.textContent = "Impossible d'enregistrer le document.";
+        saveBtn.disabled = false; cancelBtn.disabled = false;
+        return;
+      }
+
+      const done = ['Document rangé'];
+      let warn = '';
+
+      if (expenseCheck.checked) {
+        const { error: e1 } = await supabaseClient.from('expenses').insert({
+          user_id: user.id,
+          label: title.slice(0, 100),
+          amount,
+          category: s.expenseCategory,
+          spent_on: okDate(dateInput.value) || ymd(new Date()),
+          space_id: spaceId
+        });
+        if (e1) { console.error(e1); warn += " La dépense n'a pas pu être ajoutée."; }
+        else done.push('dépense ' + euro(amount) + ' notée');
+      }
+
+      if (taskCheck.checked) {
+        const { error: e2 } = await supabaseClient.from('tasks').insert({
+          user_id: user.id,
+          title: ('Payer : ' + title).slice(0, 120),
+          status: 'todo',
+          category: 'Finances',
+          priority: 'medium',
+          due_date: dueInput.value + 'T12:00:00',
+          space_id: spaceId
+        });
+        if (e2) { console.error(e2); warn += " La tâche n'a pas pu être créée."; }
+        else done.push('tâche créée');
+      }
+
+      try { localStorage.setItem(LAST_SPACE_KEY, spaceSelect.value); } catch (e) { /* ignoré */ }
+
+      clearReview();
+      status.textContent = '✅ ' + done.join(', ') + '.' + warn;
+
+      // Recharge la liste des documents (et les autres blocs qui écoutent le retour à l'écran)
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+  }
+})();
 </body></html>
