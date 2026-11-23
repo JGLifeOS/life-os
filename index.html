@@ -5428,145 +5428,127 @@ function showAiActions(actions) {
   load();
 })();
 </script>
-  import { createClient } from "npm:@supabase/supabase-js@2";
-import webpush from "npm:web-push@3.6.7";
+  <script>
+// Assistant+ v1 :
+//  1) l'assistant comprend « chaque mois », « tous les lundis », « à 8h »… pour les tâches qu'il propose
+//  2) les autres membres d'un espace partagé sont prévenus quand une tâche ou un document y est ajouté
+(function () {
+  if (window.__elnoviaAssistantPlus) return;
+  window.__elnoviaAssistantPlus = true;
 
-// Prévient les autres membres d'un espace partagé quand une tâche ou un document y est ajouté.
-// Sécurité : la personne doit être connectée, membre de l'espace, et l'élément doit vraiment
-// venir d'être créé par elle dans cet espace (impossible d'envoyer un message inventé).
+  const RECURRENCES = ['daily', 'weekly', 'monthly', 'yearly'];
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const okDay = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const okTime = v => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
+  const norm = t => String(t || '').trim().toLowerCase().slice(0, 180);
 
-const origin = "https://jglifeos.github.io";
+  // ---------- 1) Mémoire des propositions de l'assistant (répétition, heure) ----------
+  const stash = [];   // { key, recurrence, time, day, at }
 
-const cors = {
-  "Access-Control-Allow-Origin": origin,
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Content-Type": "application/json",
-};
+  function rememberActions(actions) {
+    if (!Array.isArray(actions)) return;
+    const now = Date.now();
+    for (let i = stash.length - 1; i >= 0; i--) if (now - stash[i].at > 15 * 60 * 1000) stash.splice(i, 1);
 
-function reply(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: cors });
-}
-
-// Évite d'envoyer deux fois la même notification (mémoire de l'instance, au mieux)
-const already = new Set<string>();
-
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: cors });
-  if (req.method !== "POST") return reply({ error: "Méthode interdite" }, 405);
-  if (req.headers.get("origin") !== origin) return reply({ error: "Non autorisé" }, 403);
-
-  const token = req.headers.get("Authorization")?.replace(/^Bearer /i, "");
-  if (!token) return reply({ error: "Connexion requise" }, 401);
-
-  const vapidPublic = Deno.env.get("VAPID_PUBLIC_KEY");
-  const vapidPrivate = Deno.env.get("VAPID_PRIVATE_KEY");
-  const vapidSubject = Deno.env.get("VAPID_SUBJECT");
-  if (!vapidPublic || !vapidPrivate || !vapidSubject) {
-    return reply({ error: "Clés de notification non configurées" }, 503);
+    actions.forEach(a => {
+      if (!a || a.type !== 'create_task' || typeof a.title !== 'string') return;
+      const recurrence = RECURRENCES.includes(a.recurrence) ? a.recurrence : null;
+      const time = okTime(a.remind_time) ? a.remind_time : null;
+      if (!recurrence && !time) return;
+      stash.push({ key: norm(a.title), recurrence, time, day: okDay(a.due_date) ? a.due_date : '', at: now });
+    });
   }
-  webpush.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const publishable = JSON.parse(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS") || "{}");
-  const publicKey = publishable.default || Deno.env.get("SUPABASE_ANON_KEY");
-  const secrets = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") || "{}");
-  const serviceKey = secrets.default || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!publicKey || !serviceKey) return reply({ error: "Configuration manquante" }, 500);
+  function enrichRow(row) {
+    if (!row || typeof row !== 'object' || row.recurrence) return row;
+    const i = stash.findIndex(s => s.key === norm(row.title));
+    if (i < 0) return row;
+    const hit = stash.splice(i, 1)[0];
 
-  const authClient = createClient(supabaseUrl, publicKey);
-  const { data: auth, error: authError } = await authClient.auth.getUser(token);
-  if (authError || !auth.user) return reply({ error: "Session invalide" }, 401);
-  const me = auth.user.id;
+    const out = { ...row };
+    let day = out.due_date ? String(out.due_date).slice(0, 10) : hit.day;
+    if (!day) {
+      const d = new Date();
+      if (hit.time && new Date(ymd(d) + 'T' + hit.time + ':00') <= d) d.setDate(d.getDate() + 1);
+      day = ymd(d);
+    }
+    if (!out.due_date) out.due_date = day + 'T12:00:00';
+    if (hit.recurrence) out.recurrence = hit.recurrence;
+    if (hit.time) out.remind_at = new Date(day + 'T' + hit.time + ':00').toISOString();
+    return out;
+  }
 
+  // Écoute des réponses de la fonction life-ai
   try {
-    const body = await req.json();
-    const spaceId = body.space_id;
-    const kind = body.kind;
-    const title = typeof body.title === "string" ? body.title.trim().slice(0, 180) : "";
-
-    if (
-      typeof spaceId !== "string" ||
-      !/^[0-9a-f-]{36}$/i.test(spaceId) ||
-      (kind !== "task" && kind !== "document") ||
-      !title
-    ) {
-      return reply({ error: "Demande invalide" }, 400);
+    const proto = Object.getPrototypeOf(supabaseClient);
+    const desc = Object.getOwnPropertyDescriptor(proto, 'functions');
+    const wrapFunctions = f => {
+      if (f.__elnoviaWrapped) return f;
+      const original = f.invoke.bind(f);
+      f.invoke = async function (name, options) {
+        const result = await original(name, options);
+        try { if (name === 'life-ai' && result && result.data) rememberActions(result.data.actions); } catch (e) { /* ignoré */ }
+        return result;
+      };
+      f.__elnoviaWrapped = true;
+      return f;
+    };
+    if (desc && desc.get) {
+      Object.defineProperty(supabaseClient, 'functions', {
+        configurable: true,
+        get() { return wrapFunctions(desc.get.call(this)); }
+      });
+    } else if (supabaseClient.functions) {
+      wrapFunctions(supabaseClient.functions);
     }
+  } catch (e) {
+    console.error('Assistant+ : écoute de life-ai impossible', e);
+  }
 
-    const admin = createClient(supabaseUrl, serviceKey);
-
-    // L'appelant doit être membre de l'espace
-    const { data: members, error: membersError } = await admin
-      .from("space_members")
-      .select("user_id")
-      .eq("space_id", spaceId);
-    if (membersError) {
-      console.error("Erreur lecture membres", membersError);
-      return reply({ error: "Erreur de lecture" }, 500);
-    }
-    const memberIds = (members || []).map((m: any) => m.user_id as string);
-    if (!memberIds.includes(me)) return reply({ error: "Non autorisé" }, 403);
-
-    const recipients = memberIds.filter((id) => id !== me);
-    if (recipients.length === 0) return reply({ ok: true, sent: 0 });
-
-    // L'élément doit avoir été créé à l'instant, par l'appelant, dans cet espace
-    const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
-    const { data: found } = await admin
-      .from(kind === "task" ? "tasks" : "documents")
-      .select("id")
-      .eq("user_id", me)
-      .eq("space_id", spaceId)
-      .eq("title", title)
-      .gte("created_at", since)
-      .order("created_at", { ascending: false })
-      .limit(1);
-
-    if (!found || found.length === 0) return reply({ error: "Élément introuvable" }, 400);
-
-    const dedupeKey = `${kind}:${found[0].id}`;
-    if (already.has(dedupeKey)) return reply({ ok: true, sent: 0, duplicate: true });
-    already.add(dedupeKey);
-    if (already.size > 500) already.clear();
-
-    const { data: space } = await admin.from("spaces").select("name").eq("id", spaceId).maybeSingle();
-    const spaceName = String(space?.name || "ton espace").slice(0, 40);
-
-    const text = kind === "task"
-      ? `👥 ${spaceName} : nouvelle tâche « ${title.slice(0, 80)} »`
-      : `👥 ${spaceName} : nouveau document « ${title.slice(0, 80)} »`;
-    const payload = JSON.stringify({ title: "ELNOVIA", body: text, url: "./" });
-
-    const { data: subs } = await admin
-      .from("push_subscriptions")
-      .select("id, endpoint, p256dh, auth")
-      .in("user_id", recipients);
-
-    let sent = 0;
-    for (const s of subs || []) {
+  // ---------- 2) Prévenir les membres d'un espace ----------
+  async function notifySpaces(table, rows) {
+    const list = (Array.isArray(rows) ? rows : [rows]).filter(r => r && r.space_id && r.title);
+    for (const r of list) {
       try {
-        await webpush.sendNotification(
-          { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-          payload,
-          { TTL: 60 * 60 },
-        );
-        sent++;
-      } catch (e: any) {
-        if (e?.statusCode === 404 || e?.statusCode === 410) {
-          await admin.from("push_subscriptions").delete().eq("id", s.id);
-        } else {
-          console.error("Erreur envoi notification", e?.statusCode, e?.body || e);
-        }
+        await supabaseClient.functions.invoke('notify-space', {
+          body: { space_id: r.space_id, kind: table === 'tasks' ? 'task' : 'document', title: String(r.title).slice(0, 180) }
+        });
+      } catch (e) {
+        console.error('Notification de l’espace impossible', e);
       }
     }
-
-    return reply({ ok: true, sent });
-  } catch (e) {
-    console.error("Erreur de traitement", e);
-    return reply({ error: "Erreur de traitement" }, 500);
   }
-});
+
+  // ---------- Branchement sur les ajouts de tâches et de documents ----------
+  const originalFrom = supabaseClient.from.bind(supabaseClient);
+  supabaseClient.from = function (table) {
+    const query = originalFrom(table);
+    if (table !== 'tasks' && table !== 'documents') return query;
+
+    const originalInsert = query.insert.bind(query);
+    query.insert = function (values, options) {
+      let toSend = values;
+      if (table === 'tasks') {
+        toSend = Array.isArray(values) ? values.map(enrichRow) : enrichRow(values);
+      }
+      const builder = originalInsert(toSend, options);
+
+      const originalThen = builder.then.bind(builder);
+      builder.then = function (onFulfilled, onRejected) {
+        return originalThen(result => {
+          try {
+            if (result && !result.error) notifySpaces(table, toSend);
+          } catch (e) { /* ignoré */ }
+          return onFulfilled ? onFulfilled(result) : result;
+        }, onRejected);
+      };
+      return builder;
+    };
+    return query;
+  };
+})();
+</script>
   <script>
 // Sauvegarde v1 : télécharger une copie de ses données (fichier ZIP : données, tableaux CSV et fichiers des documents)
 (function () {
