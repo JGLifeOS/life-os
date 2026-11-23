@@ -5756,4 +5756,51 @@ function showAiActions(actions) {
   });
 })();
 </script>
+  <script>
+// Résumé de la semaine v1 : bouton pour voir (et recevoir en notification) le bilan de la semaine
+(function () {
+  function install() {
+    const card = document.getElementById('todayCard');
+    if (!card || document.getElementById('weeklyBox')) return;
+
+    const box = document.createElement('div');
+    box.id = 'weeklyBox';
+    box.style.cssText = 'margin-top:12px;';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '📊 Résumé de ma semaine';
+    const out = document.createElement('p');
+    out.style.cssText = 'margin:8px 0 0;';
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      out.textContent = 'Calcul du résumé…';
+      try {
+        const { data: { session } } = await supabaseClient.auth.getSession();
+        if (!session) { out.textContent = 'Connecte-toi pour continuer.'; return; }
+        const { data, error } = await supabaseClient.functions.invoke('send-reminders', {
+          body: { weekly: true },
+          headers: { Authorization: 'Bearer ' + session.access_token }
+        });
+        if (error) throw error;
+        out.textContent = data && data.summary
+          ? data.summary
+          : 'Active d’abord les rappels sur cet appareil pour recevoir le résumé.';
+      } catch (e) {
+        console.error(e);
+        out.textContent = 'Impossible de calculer le résumé pour le moment.';
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    box.append(btn, out);
+    card.appendChild(box);
+  }
+
+  install();
+  new MutationObserver(install).observe(document.body, { childList: true, subtree: true });
+})();
+</script>
 </body></html>
