@@ -5024,4 +5024,408 @@ function showAiActions(actions) {
   setTimeout(render, 1500);
 })();
 </script>
+  <script>
+// À trier v1 : documents envoyés par le raccourci de l'iPhone, à vérifier puis ranger en un clic
+(function () {
+  if (document.getElementById('inboxSection')) return;
+  const docsSection = [...document.querySelectorAll('section.card')]
+    .find(s => (s.querySelector('h2')?.textContent || '').includes('Mes documents'));
+  if (!docsSection) return;
+
+  const CATEGORIES = ['Factures', 'Contrats', 'Identité', 'Santé', 'Logement', 'Impôts', 'Autre'];
+  const EXPENSE_CATEGORIES = ['Courses', 'Logement', 'Transport', 'Loisirs', 'Santé', 'Abonnements', 'Autre'];
+  const KINDS = ['ticket_paye', 'facture_a_payer', 'autre'];
+  const BUCKET = 'life-documents';
+  const LAST_SPACE_KEY = 'elnovia_scan_space';
+
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const euro = n => n.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+  const okDate = v =>
+    typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(new Date(v + 'T12:00:00')) ? v : '';
+  const okAmount = v =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 && v < 1000000 ? Math.round(v * 100) / 100 : null;
+
+  const el = (tag, text, css) => {
+    const n = document.createElement(tag);
+    if (text) n.textContent = text;
+    if (css) n.style.cssText = css;
+    return n;
+  };
+  const labelled = (text, control) => {
+    const l = el('label', null, 'display:block;margin-top:10px;');
+    l.append(el('span', text, 'display:block;font-size:13px;opacity:.75;'), control);
+    return l;
+  };
+
+  const card = document.createElement('section');
+  card.className = 'card';
+  card.id = 'inboxSection';
+
+  const heading = el('h2', '📥 À trier');
+  const intro = el('p', 'Les documents envoyés depuis ton iPhone par le raccourci arrivent ici. Vérifie ce que l’IA a compris, puis range-les.');
+  intro.className = 'muted';
+  const status = el('p', '', 'margin:8px 0 0;');
+  const listBox = el('div', null, 'margin-top:8px;');
+
+  // ----- Réglage du raccourci : code personnel -----
+  const setup = document.createElement('details');
+  setup.style.marginTop = '16px';
+  setup.appendChild(el('summary', '⚙️ Raccourci iPhone : mon code', 'cursor:pointer;font-weight:700;'));
+
+  const setupText = el('p', 'Ce code permet à ton iPhone d’envoyer des documents dans ta boîte « À trier », sans ouvrir l’application. Ne le partage avec personne.', 'margin:10px 0;');
+  setupText.className = 'muted';
+
+  const createBtn = el('button', '🔑 Créer mon code');
+  createBtn.type = 'button';
+
+  const result = el('div', null, 'display:none;margin-top:12px;');
+  const urlInput = document.createElement('input');
+  urlInput.type = 'text'; urlInput.readOnly = true;
+  const tokenInput = document.createElement('input');
+  tokenInput.type = 'text'; tokenInput.readOnly = true;
+
+  const copyBtn = input => {
+    const b = el('button', 'Copier');
+    b.type = 'button';
+    b.style.marginBottom = '10px';
+    b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(input.value); }
+      catch (e) { input.select(); try { document.execCommand('copy'); } catch (e2) { /* ignoré */ } }
+      b.textContent = 'Copié ✓';
+      setTimeout(() => { b.textContent = 'Copier'; }, 2000);
+    });
+    return b;
+  };
+
+  const warn = el('p', '⚠️ Ce code n’est affiché qu’une seule fois : copie-le maintenant dans ton raccourci. Si tu en recrées un, l’ancien cesse de fonctionner.', 'margin:0;');
+  result.append(
+    labelled('Adresse (URL)', urlInput), copyBtn(urlInput),
+    labelled('Code secret', tokenInput), copyBtn(tokenInput),
+    warn
+  );
+
+  setup.append(setupText, createBtn, result);
+  card.append(heading, intro, status, listBox, setup);
+  docsSection.after(card);
+
+  let hasToken = false;
+
+  createBtn.addEventListener('click', async () => {
+    if (hasToken && !confirm('Créer un nouveau code ? L’ancien cessera de fonctionner : il faudra le remplacer dans ton raccourci.')) return;
+
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) { status.textContent = 'Connecte-toi pour créer ton code.'; return; }
+
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    const token = [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+    const hash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+
+    const { error } = await supabaseClient.from('inbox_tokens')
+      .upsert({ user_id: user.id, token_hash: hash }, { onConflict: 'user_id' });
+    if (error) {
+      console.error(error);
+      status.textContent = 'Impossible de créer le code.';
+      return;
+    }
+
+    hasToken = true;
+    createBtn.textContent = '🔑 Créer un nouveau code';
+    const base = supabaseClient.supabaseUrl || '';
+    urlInput.value = base ? base + '/functions/v1/scan-inbox' : '(Supabase > Edge Functions > scan-inbox)';
+    tokenInput.value = token;
+    result.style.display = 'block';
+    status.textContent = '';
+  });
+
+  // ----- Liste des documents à trier -----
+  function renderItem(item, spaces) {
+    const raw = item.scan || null;
+    const s = {
+      readable: !!(raw && raw.readable),
+      title: raw ? String(raw.title || '').trim().slice(0, 120) : '',
+      category: raw && CATEGORIES.includes(raw.category) ? raw.category : 'Autre',
+      docDate: raw ? okDate(raw.doc_date) : '',
+      amount: raw ? okAmount(raw.amount) : null,
+      kind: raw && KINDS.includes(raw.kind) ? raw.kind : 'autre',
+      dueDate: raw ? okDate(raw.due_date) : '',
+      expenseCategory: raw && EXPENSE_CATEGORIES.includes(raw.expense_category) ? raw.expense_category : 'Autre',
+      summary: raw ? String(raw.summary || '').trim().slice(0, 300) : ''
+    };
+
+    const box = el('div', null, 'padding:14px 0;border-top:1px solid #303950;');
+    const when = new Date(item.created_at).toLocaleString('fr-FR', {
+      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+    });
+    box.appendChild(el('p', 'Reçu le ' + when, 'margin:0 0 8px;font-size:13px;opacity:.75;'));
+
+    // Aperçu
+    const viewBtn = el('button', 'Voir le document');
+    viewBtn.type = 'button';
+    viewBtn.addEventListener('click', async () => {
+      const w = window.open('', '_blank');
+      if (!w) { status.textContent = "Ton navigateur a bloqué l'ouverture : autorise les fenêtres pop-up."; return; }
+      const { data, error } = await supabaseClient.storage.from(BUCKET).createSignedUrl(item.file_path, 120);
+      if (error || !data) { console.error(error); w.close(); return; }
+      w.location.href = data.signedUrl;
+    });
+
+    if ((item.mime || '').startsWith('image/')) {
+      const img = document.createElement('img');
+      img.alt = 'Aperçu';
+      img.style.cssText = 'max-width:100%;max-height:180px;border-radius:8px;display:block;margin-bottom:8px;';
+      box.appendChild(img);
+      supabaseClient.storage.from(BUCKET).createSignedUrl(item.file_path, 300)
+        .then(({ data }) => { if (data) img.src = data.signedUrl; });
+    } else {
+      box.appendChild(el('p', '📄 Document PDF', 'margin:0 0 8px;'));
+    }
+    box.appendChild(viewBtn);
+
+    if (!raw) {
+      box.appendChild(el('p', '⚠️ Je n’ai pas pu lire ce document : remplis les champs toi-même.', 'margin:10px 0 0;'));
+    } else if (!s.readable) {
+      box.appendChild(el('p', '⚠️ Document peu lisible : vérifie les champs.', 'margin:10px 0 0;'));
+    } else if (s.summary) {
+      box.appendChild(el('p', '🧠 ' + s.summary, 'margin:10px 0 0;'));
+    }
+
+    const titleInput = document.createElement('input');
+    titleInput.type = 'text'; titleInput.maxLength = 120;
+    titleInput.value = s.title || 'Document reçu';
+
+    const categorySelect = document.createElement('select');
+    CATEGORIES.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c; o.textContent = c;
+      categorySelect.appendChild(o);
+    });
+    categorySelect.value = s.category;
+
+    const dateInput = document.createElement('input');
+    dateInput.type = 'date'; dateInput.value = s.docDate;
+
+    const amountInput = document.createElement('input');
+    amountInput.type = 'text'; amountInput.inputMode = 'decimal'; amountInput.placeholder = 'ex. 45,50';
+    amountInput.value = s.amount != null ? String(s.amount).replace('.', ',') : '';
+
+    const spaceSelect = document.createElement('select');
+    const perso = document.createElement('option');
+    perso.value = ''; perso.textContent = 'Perso (privé)';
+    spaceSelect.appendChild(perso);
+    spaces.forEach(x => {
+      const o = document.createElement('option');
+      o.value = x.id; o.textContent = '👥 ' + x.name;
+      spaceSelect.appendChild(o);
+    });
+    try {
+      const last = localStorage.getItem(LAST_SPACE_KEY);
+      if (last && [...spaceSelect.options].some(o => o.value === last)) spaceSelect.value = last;
+    } catch (e) { /* stockage indisponible */ }
+
+    box.append(
+      labelled('Titre', titleInput),
+      labelled('Catégorie', categorySelect),
+      labelled('Date du document (facultatif)', dateInput),
+      labelled('Montant en € (facultatif)', amountInput),
+      labelled('Où le ranger', spaceSelect)
+    );
+
+    const expenseRow = el('label', null, 'display:block;margin-top:14px;');
+    const expenseCheck = document.createElement('input');
+    expenseCheck.type = 'checkbox';
+    expenseCheck.checked = s.kind === 'ticket_paye' && s.amount != null;
+    expenseRow.append(expenseCheck, ' Noter aussi cette dépense (' + s.expenseCategory + ')');
+
+    const taskRow = el('label', null, 'display:block;margin-top:10px;');
+    const taskCheck = document.createElement('input');
+    taskCheck.type = 'checkbox';
+    taskCheck.checked = s.kind === 'facture_a_payer' && !!s.dueDate;
+    taskRow.append(taskCheck, ' Créer une tâche pour la payer avant le :');
+
+    const dueInput = document.createElement('input');
+    dueInput.type = 'date'; dueInput.value = s.dueDate; dueInput.style.marginTop = '6px';
+
+    box.append(expenseRow, taskRow, dueInput);
+
+    const saveBtn = el('button', '✅ Ranger le document', 'margin-top:14px;');
+    saveBtn.type = 'button';
+    const dropBtn = el('button', '🗑 Jeter', 'margin-top:14px;margin-left:8px;');
+    dropBtn.type = 'button';
+    dropBtn.className = 'delete';
+    box.append(saveBtn, dropBtn);
+
+    dropBtn.addEventListener('click', async () => {
+      if (!confirm('Jeter ce document ? Le fichier sera effacé définitivement.')) return;
+      dropBtn.disabled = true; saveBtn.disabled = true;
+      const rm = await supabaseClient.storage.from(BUCKET).remove([item.file_path]);
+      if (rm.error) { console.error(rm.error); status.textContent = 'Impossible de supprimer le fichier.'; dropBtn.disabled = false; saveBtn.disabled = false; return; }
+      const { error } = await supabaseClient.from('inbox_items').delete().eq('id', item.id);
+      if (error) console.error(error);
+      status.textContent = '🗑 Document jeté.';
+      load();
+    });
+
+    saveBtn.addEventListener('click', async () => {
+      const title = titleInput.value.trim();
+      if (!title) { status.textContent = 'Donne un titre au document.'; return; }
+
+      const rawAmount = amountInput.value.trim();
+      let amount = null;
+      if (rawAmount) {
+        amount = okAmount(Number(rawAmount.replace(/\s/g, '').replace(',', '.')));
+        if (amount === null) { status.textContent = 'Montant invalide : écris par exemple 45,50.'; return; }
+      }
+      if (expenseCheck.checked && amount === null) { status.textContent = 'Pour noter la dépense, indique le montant.'; return; }
+      if (taskCheck.checked && !okDate(dueInput.value)) { status.textContent = 'Pour créer la tâche, choisis la date limite.'; return; }
+
+      const { data: { user } } = await supabaseClient.auth.getUser();
+      if (!user) { status.textContent = 'Connecte-toi pour ranger ce document.'; return; }
+
+      saveBtn.disabled = true; dropBtn.disabled = true;
+      status.textContent = 'Rangement en cours…';
+      const spaceId = spaceSelect.value || null;
+
+      const { error } = await supabaseClient.from('documents').insert({
+        user_id: user.id,
+        space_id: spaceId,
+        title,
+        category: categorySelect.value,
+        file_path: item.file_path,
+        summary: s.summary || null,
+        doc_date: okDate(dateInput.value) || null,
+        amount
+      });
+      if (error) {
+        console.error(error);
+        status.textContent = "Impossible d'enregistrer le document.";
+        saveBtn.disabled = false; dropBtn.disabled = false;
+        return;
+      }
+
+      const done = ['Document rangé'];
+      let problems = '';
+
+      if (expenseCheck.checked) {
+        const { error: e1 } = await supabaseClient.from('expenses').insert({
+          user_id: user.id,
+          label: title.slice(0, 100),
+          amount,
+          category: s.expenseCategory,
+          spent_on: okDate(dateInput.value) || ymd(new Date()),
+          space_id: spaceId
+        });
+        if (e1) { console.error(e1); problems += " La dépense n'a pas pu être ajoutée."; }
+        else done.push('dépense ' + euro(amount) + ' notée');
+      }
+
+      if (taskCheck.checked) {
+        const { error: e2 } = await supabaseClient.from('tasks').insert({
+          user_id: user.id,
+          title: ('Payer : ' + title).slice(0, 120),
+          status: 'todo',
+          category: 'Finances',
+          priority: 'medium',
+          due_date: dueInput.value + 'T12:00:00',
+          space_id: spaceId
+        });
+        if (e2) { console.error(e2); problems += " La tâche n'a pas pu être créée."; }
+        else done.push('tâche créée');
+      }
+
+      // Le document est rangé : on le retire de la boîte « À trier » (le fichier reste, lui, dans tes documents)
+      const { error: e3 } = await supabaseClient.from('inbox_items').delete().eq('id', item.id);
+      if (e3) console.error(e3);
+
+      try { localStorage.setItem(LAST_SPACE_KEY, spaceSelect.value); } catch (e) { /* ignoré */ }
+      status.textContent = '✅ ' + done.join(', ') + '.' + problems;
+
+      load();
+      // Recharge « Mes documents » et les autres blocs qui écoutent le retour à l'écran
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    return box;
+  }
+
+  // Petite ligne dans la carte « Aujourd'hui »
+  function updateToday(count) {
+    const today = document.getElementById('todayCard');
+    if (!today) return;
+    let note = document.getElementById('todayInboxNote');
+    if (!note) {
+      note = el('button', null, 'margin:0 0 10px;background:#2b3655;');
+      note.type = 'button';
+      note.id = 'todayInboxNote';
+      note.addEventListener('click', () => card.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+      const actions = today.children[2];
+      if (actions) actions.after(note); else today.appendChild(note);
+    }
+    note.style.display = count > 0 ? 'block' : 'none';
+    note.textContent = '📥 ' + count + ' document' + (count > 1 ? 's' : '') + ' à trier';
+  }
+
+  let loading = false;
+  let again = false;
+
+  async function load() {
+    if (loading) { again = true; return; }
+    loading = true;
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser();
+      if (!user) {
+        listBox.replaceChildren(el('p', 'Connecte-toi pour voir ta boîte « À trier ».', 'margin:0;'));
+        heading.textContent = '📥 À trier';
+        updateToday(0);
+        return;
+      }
+
+      const [items, sp, tok] = await Promise.all([
+        supabaseClient.from('inbox_items').select('id, file_path, mime, scan, created_at')
+          .order('created_at', { ascending: false }).limit(20),
+        supabaseClient.from('spaces').select('id, name').order('name'),
+        supabaseClient.from('inbox_tokens').select('user_id').maybeSingle()
+      ]);
+
+      hasToken = !!(tok.data);
+      if (hasToken && result.style.display === 'none') createBtn.textContent = '🔑 Créer un nouveau code';
+
+      if (items.error) {
+        console.error(items.error);
+        listBox.replaceChildren(el('p', 'Impossible de charger la boîte « À trier ».', 'margin:0;'));
+        return;
+      }
+
+      const rows = items.data || [];
+      heading.textContent = rows.length ? '📥 À trier (' + rows.length + ')' : '📥 À trier';
+      listBox.replaceChildren();
+      if (rows.length === 0) {
+        listBox.appendChild(el('p', 'Rien à trier pour le moment.', 'margin:0;'));
+      } else {
+        rows.forEach(r => listBox.appendChild(renderItem(r, sp.data || [])));
+      }
+      updateToday(rows.length);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      loading = false;
+      if (again) { again = false; load(); }
+    }
+  }
+
+  // On relit quand on revient sur l'app (par exemple après un envoi depuis le raccourci)
+  let timer = null;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    clearTimeout(timer);
+    timer = setTimeout(load, 300);
+  });
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    if (!session || event === 'INITIAL_SESSION' || event === 'SIGNED_IN') setTimeout(load, 0);
+  });
+
+  load();
+})();
+</script>
 </body></html>
