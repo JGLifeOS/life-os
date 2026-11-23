@@ -5941,4 +5941,40 @@ function showAiActions(actions) {
   applyTabs();
 })();
 </script>
+  <script>
+// Tâches v1 : les filtres (statut, priorité, catégorie) sortent du formulaire d'ajout et vont dans « Filtrer »
+(function () {
+  function fix() {
+    const filters = document.getElementById('taskFilters');
+    const list = document.getElementById('taskList');
+    if (!filters || !list || document.getElementById('taskFilterBox')) return;
+
+    const details = document.createElement('details');
+    details.id = 'taskFilterBox';
+    details.style.cssText = 'margin:16px 0 8px;';
+
+    const summary = document.createElement('summary');
+    summary.textContent = '🔎 Filtrer mes tâches';
+    summary.style.cssText = 'cursor:pointer;font-weight:600;color:#c4b5ff;padding:6px 0;';
+
+    filters.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;';
+    details.append(summary, filters);
+    list.parentNode.insertBefore(details, list);
+
+    // Petit repère au-dessus des choix du formulaire d'ajout
+    const form = document.getElementById('taskForm');
+    const cat = document.getElementById('taskCategory');
+    if (form && cat && !document.getElementById('taskFormHint')) {
+      const hint = document.createElement('small');
+      hint.id = 'taskFormHint';
+      hint.textContent = 'Catégorie, priorité et date de la nouvelle tâche :';
+      hint.style.cssText = 'display:block;margin:2px 0 6px;';
+      cat.parentNode.insertBefore(hint, cat);
+    }
+  }
+
+  fix();
+  new MutationObserver(fix).observe(document.body, { childList: true, subtree: true });
+})();
+</script>
 </body></html>
