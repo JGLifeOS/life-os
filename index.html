@@ -6098,7 +6098,7 @@ function showAiActions(actions) {
   document.head.appendChild(style);
 })();
 </script>
-  <script>
+ <script>
 // Documents v2 : liste allégée, formulaire manuel et filtres repliés
 (function () {
   const style = document.createElement('style');
@@ -6161,7 +6161,36 @@ function showAiActions(actions) {
       }
     }
 
-    // 3) lignes de la liste
+    // 3) lignes de la liste (avec la vraie date du document quand elle est connue)
+    if (card.querySelector('.task:not([data-c])')) {
+      loadDates().then(() => process(card));
+    }
+  }
+
+  // Dates des documents : date lue sur le document (si connue), sinon date d'ajout
+  let dateMap = {};
+  let loading = null;
+  const dayKey = iso => new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  function loadDates() {
+    if (loading) return loading;
+    loading = (async () => {
+      try {
+        const { data } = await supabaseClient.from('documents').select('title, created_at, doc_date').limit(1000);
+        dateMap = {};
+        (data || []).forEach(d => {
+          if (d.doc_date) dateMap[(d.title || 'Sans titre') + '|' + dayKey(d.created_at)] = String(d.doc_date).slice(0, 10);
+        });
+      } catch (e) { /* on affichera la date d'ajout */ }
+      setTimeout(() => { loading = null; }, 1500);
+    })();
+    return loading;
+  }
+  const fromIso = ymd => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd || '');
+    return m ? Number(m[3]) + ' ' + MONTHS[Number(m[2]) - 1] + ' ' + m[1] : '';
+  };
+
+  function process(card) {
     card.querySelectorAll('.task:not([data-c])').forEach(row => {
       const label = row.querySelector(':scope > span');
       if (!label) return;
@@ -6174,10 +6203,16 @@ function showAiActions(actions) {
 
       const title = parts.slice(0, j - 1).join(' — ');
       const category = parts[j - 1];
-      const tail = (parts[j].replace(DATE, '').trim() + ' ' + parts.slice(j + 1).join(' ')).trim();
-      const note = [category, shortDate(parts[j])].filter(Boolean).join(' · ') + (tail ? ' · ' + tail : '');
+      const added = parts[j].slice(0, 10);
+      const tail = (parts[j].slice(10).trim() + ' ' + parts.slice(j + 1).join(' ')).trim();
 
-      label.textContent = title;
+      const docDay = fromIso(dateMap[title + '|' + added]);
+      const dateText = docDay || ('ajouté le ' + shortDate(added).replace(/ \d{4}$/, ''));
+      const note = [category, dateText].join(' · ') + (tail ? ' · ' + tail : '');
+
+      // On retire les dates écrites dans le titre (ex. « 18/11/2026 ») : la date est déjà dans la ligne du dessous
+      const cleaned = title.replace(/\s*\b\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}\b/g, '').replace(/\s{2,}/g, ' ').trim();
+      label.textContent = cleaned || title;
       const small = document.createElement('small');
       small.className = 'muted';
       small.textContent = note;
