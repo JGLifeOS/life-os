@@ -4816,4 +4816,212 @@ function showAiActions(actions) {
   }, true);
 })();
 </script>
+  <script>
+// Budget v1 : plafond mensuel par catégorie, barres de progression et alertes (80 % et dépassement)
+(function () {
+  if (document.getElementById('budgetSection')) return;
+  const finances = [...document.querySelectorAll('section.card')]
+    .find(s => (s.querySelector('h2')?.textContent || '').includes('Mes finances'));
+  if (!finances) return;
+
+  const CATEGORIES = ['Courses', 'Logement', 'Transport', 'Loisirs', 'Santé', 'Abonnements', 'Autre'];
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const euro = cents => (cents / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+  const el = (tag, text, css) => {
+    const n = document.createElement(tag);
+    if (text) n.textContent = text;
+    if (css) n.style.cssText = css;
+    return n;
+  };
+
+  const card = document.createElement('section');
+  card.className = 'card';
+  card.id = 'budgetSection';
+
+  const heading = el('h2', '💶 Mon budget');
+  const intro = el('p', 'Fixe un plafond par catégorie pour le mois. Tes dépenses perso sont comparées automatiquement, et tu es prévenu à 80 %.');
+  intro.className = 'muted';
+
+  const alertBox = el('div');
+  const form = document.createElement('form');
+  form.style.marginTop = '12px';
+
+  const catSelect = document.createElement('select');
+  CATEGORIES.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c; o.textContent = c;
+    catSelect.appendChild(o);
+  });
+
+  const limitInput = document.createElement('input');
+  limitInput.type = 'text';
+  limitInput.inputMode = 'decimal';
+  limitInput.placeholder = 'Plafond du mois en € (ex. 250)';
+  limitInput.required = true;
+
+  const saveBtn = el('button', 'Enregistrer le plafond');
+  saveBtn.type = 'submit';
+
+  form.append(catSelect, limitInput, saveBtn);
+
+  const status = el('p', '', 'margin:8px 0 0;');
+  status.className = 'muted';
+  const listBox = el('div', null, 'margin-top:12px;');
+
+  card.append(heading, intro, alertBox, form, status, listBox);
+  (document.getElementById('recapSection') || finances).after(card);
+
+  // Zone d'alertes dans la carte « Aujourd'hui »
+  function todayAlertBox() {
+    const today = document.getElementById('todayCard');
+    if (!today) return null;
+    let box = document.getElementById('todayBudgetAlerts');
+    if (!box) {
+      box = el('div', null, 'margin-top:14px;');
+      box.id = 'todayBudgetAlerts';
+      const spend = today.children[4];
+      if (spend) spend.after(box); else today.appendChild(box);
+    }
+    return box;
+  }
+
+  let budgets = [];
+  let spent = {};
+  let loading = false;
+  let again = false;
+
+  function render() {
+    listBox.replaceChildren();
+    alertBox.replaceChildren();
+    const tBox = todayAlertBox();
+    if (tBox) tBox.replaceChildren();
+
+    if (budgets.length === 0) {
+      listBox.appendChild(el('p', 'Aucun plafond pour le moment.', 'margin:0;'));
+      return;
+    }
+
+    const alerts = [];
+
+    budgets.forEach(b => {
+      const limit = Math.round(Number(b.monthly_limit) * 100);
+      const used = spent[b.category] || 0;
+      const pct = limit > 0 ? Math.round((used / limit) * 100) : 0;
+      const color = pct >= 100 ? '#f9728a' : pct >= 80 ? '#f5a953' : '#7659ed';
+
+      const row = el('div', null, 'margin:12px 0;');
+      const top = el('div', null, 'display:flex;justify-content:space-between;gap:8px;align-items:center;');
+      top.appendChild(el('span', b.category + ' — ' + euro(used) + ' sur ' + euro(limit) + ' (' + pct + ' %)'));
+
+      const del = el('button', 'Retirer');
+      del.type = 'button';
+      del.className = 'delete';
+      del.addEventListener('click', async () => {
+        if (!confirm('Retirer le plafond « ' + b.category + ' » ?')) return;
+        const { error } = await supabaseClient.from('budgets').delete().eq('id', b.id);
+        if (error) { console.error(error); status.textContent = 'Impossible de retirer ce plafond.'; return; }
+        load();
+      });
+      top.appendChild(del);
+
+      const track = el('div', null, 'height:10px;border-radius:6px;background:#0b1224;border:1px solid #35415e;margin-top:6px;overflow:hidden;');
+      track.appendChild(el('div', null, 'height:100%;width:' + Math.min(100, pct) + '%;background:' + color + ';'));
+
+      row.append(top, track);
+      listBox.appendChild(row);
+
+      if (pct >= 100) alerts.push('🚨 ' + b.category + ' : budget dépassé (' + euro(used) + ' sur ' + euro(limit) + ')');
+      else if (pct >= 80) alerts.push('⚠️ ' + b.category + ' : ' + pct + ' % du budget (' + euro(used) + ' sur ' + euro(limit) + ')');
+    });
+
+    alerts.forEach(text => {
+      alertBox.appendChild(el('p', text, 'margin:6px 0;font-weight:700;'));
+      if (tBox) tBox.appendChild(el('p', text, 'margin:6px 0;font-weight:700;'));
+    });
+    if (tBox && alerts.length) tBox.prepend(el('p', 'Budget', 'margin:0 0 6px;font-weight:700;'));
+  }
+
+  async function load() {
+    if (loading) { again = true; return; }
+    loading = true;
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser();
+      if (!user) { budgets = []; spent = {}; render(); return; }
+
+      const now = new Date();
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+      const [b, e] = await Promise.all([
+        supabaseClient.from('budgets').select('id, category, monthly_limit').order('category'),
+        supabaseClient.from('expenses').select('amount, category')
+          .is('space_id', null).gte('spent_on', ymd(first)).lt('spent_on', ymd(next)).limit(2000)
+      ]);
+
+      if (b.error) {
+        console.error(b.error);
+        status.textContent = 'Impossible de charger les plafonds.';
+        return;
+      }
+      budgets = b.data || [];
+
+      spent = {};
+      (e.data || []).forEach(x => {
+        const cents = Math.round(Number(x.amount) * 100);
+        if (!Number.isFinite(cents)) return;
+        const c = x.category || 'Autre';
+        spent[c] = (spent[c] || 0) + cents;
+      });
+
+      render();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      loading = false;
+      if (again) { again = false; load(); }
+    }
+  }
+
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const value = Number(limitInput.value.replace(/\s/g, '').replace(',', '.'));
+    if (!Number.isFinite(value) || value <= 0 || value >= 1000000) {
+      status.textContent = 'Plafond invalide : écris par exemple 250.';
+      return;
+    }
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) { status.textContent = 'Connecte-toi pour fixer un budget.'; return; }
+
+    const { error } = await supabaseClient.from('budgets').upsert(
+      { user_id: user.id, category: catSelect.value, monthly_limit: Math.round(value * 100) / 100 },
+      { onConflict: 'user_id,category' }
+    );
+    if (error) {
+      console.error(error);
+      status.textContent = "Impossible d'enregistrer le plafond.";
+      return;
+    }
+    limitInput.value = '';
+    status.textContent = '✅ Plafond enregistré pour ' + catSelect.value + '.';
+    load();
+  });
+
+  // Mise à jour quand les dépenses changent, quand on revient sur l'app, ou à la connexion
+  let timer = null;
+  const later = () => { clearTimeout(timer); timer = setTimeout(load, 700); };
+  new MutationObserver(later).observe(finances, { childList: true, subtree: true });
+  const recap = document.getElementById('recapSection');
+  if (recap) new MutationObserver(later).observe(recap, { childList: true, subtree: true });
+
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) later(); });
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    if (!session || event === 'INITIAL_SESSION' || event === 'SIGNED_IN') setTimeout(load, 0);
+  });
+
+  load();
+  // La carte « Aujourd'hui » se redessine après nous : on remet les alertes juste après
+  setTimeout(render, 1500);
+})();
+</script>
 </body></html>
