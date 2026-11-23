@@ -4409,4 +4409,275 @@ function showAiActions(actions) {
   }
 })();
     </script>
+  <script>
+// Accueil v1 : carte « Aujourd'hui » en haut de la page (tâches du jour, dépenses du mois, derniers documents, raccourcis)
+(function () {
+  if (document.getElementById('todayCard')) return;
+  const anchor = document.querySelector('section.card.gradient') || document.querySelector('section.card');
+  if (!anchor) return;
+
+  const el = (tag, text, css) => {
+    const n = document.createElement(tag);
+    if (text) n.textContent = text;
+    if (css) n.style.cssText = css;
+    return n;
+  };
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const euro = cents => (cents / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+  const sectionTitle = text => el('p', text, 'margin:18px 0 6px;font-weight:700;');
+
+  const card = document.createElement('section');
+  card.className = 'card';
+  card.id = 'todayCard';
+
+  const head = el('h2', '☀️ Aujourd’hui');
+  const dateLine = el('p', '', 'margin:-8px 0 12px;');
+  dateLine.className = 'muted';
+
+  // Raccourcis
+  const actions = el('div', null, 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;');
+
+  const talkBtn = el('button', '🎤 Parler');
+  talkBtn.type = 'button';
+  talkBtn.addEventListener('click', () => {
+    const ai = document.getElementById('life-ai');
+    if (!ai) return;
+    ai.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const mic = [...ai.querySelectorAll('button')].find(b => (b.textContent || '').includes('🎤'));
+    const q = document.getElementById('aiQuestion');
+    if (mic) mic.click(); else if (q) q.focus();
+  });
+
+  const scanBtn = el('button', '📷 Scanner');
+  scanBtn.type = 'button';
+  scanBtn.addEventListener('click', () => {
+    const b = document.querySelector('#scanBox button');
+    if (b) b.click();
+  });
+
+  const taskBtn = el('button', '＋ Tâche');
+  taskBtn.type = 'button';
+  taskBtn.addEventListener('click', () => {
+    const i = document.getElementById('taskInput');
+    if (!i) return;
+    i.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    i.focus();
+  });
+
+  actions.append(talkBtn, scanBtn, taskBtn);
+
+  const tasksBox = el('div');
+  const spendBox = el('div');
+  const docsBox = el('div');
+
+  card.append(head, dateLine, actions, tasksBox, spendBox, docsBox);
+  anchor.before(card);
+
+  // ---------- Tâches du jour et en retard ----------
+  async function loadTasksBox() {
+    const today = ymd(new Date());
+    const endToday = today + 'T23:59:59';
+    const in7 = new Date(); in7.setDate(in7.getDate() + 7);
+
+    const [due, soon] = await Promise.all([
+      supabaseClient.from('tasks').select('id, title, status, due_date')
+        .neq('status', 'done').lte('due_date', endToday)
+        .order('due_date', { ascending: true }).limit(50),
+      supabaseClient.from('tasks').select('id', { count: 'exact', head: true })
+        .neq('status', 'done').gt('due_date', endToday).lte('due_date', ymd(in7) + 'T23:59:59')
+    ]);
+
+    tasksBox.replaceChildren(sectionTitle('À faire'));
+
+    if (due.error) {
+      console.error(due.error);
+      tasksBox.appendChild(el('p', 'Impossible de charger les tâches.', 'margin:0;'));
+      return;
+    }
+
+    const items = due.data || [];
+    if (items.length === 0) {
+      tasksBox.appendChild(el('p', 'Rien d’urgent aujourd’hui 🎉', 'margin:0;'));
+    }
+
+    items.slice(0, 6).forEach(t => {
+      const row = document.createElement('div');
+      row.className = 'task';
+
+      const done = el('button', '✓', 'background:#2b3655;padding:6px 12px;');
+      done.type = 'button';
+      done.title = 'Marquer comme terminée';
+      done.addEventListener('click', async () => {
+        done.disabled = true;
+        const { error } = await supabaseClient.from('tasks').update({ status: 'done' }).eq('id', t.id);
+        if (error) {
+          console.error(error);
+          done.disabled = false;
+          return;
+        }
+        load();
+        if (typeof window.loadTasks === 'function') window.loadTasks();
+      });
+
+      const day = String(t.due_date || '').slice(0, 10);
+      const late = day && day < today;
+      let label = t.title || 'Sans titre';
+      if (late) label += ' — ⚠️ en retard (' + day.slice(8, 10) + '/' + day.slice(5, 7) + ')';
+      else label += ' — aujourd’hui';
+
+      row.append(done, el('span', label));
+      tasksBox.appendChild(row);
+    });
+
+    if (items.length > 6) {
+      tasksBox.appendChild(el('p', '… et ' + (items.length - 6) + ' autre(s) dans « Mes tâches ».', 'margin:8px 0 0;'));
+    }
+
+    const n = soon.count || 0;
+    if (n > 0) {
+      const p = el('p', n + ' tâche' + (n > 1 ? 's' : '') + ' dans les 7 prochains jours.', 'margin:8px 0 0;');
+      p.className = 'muted';
+      tasksBox.appendChild(p);
+    }
+  }
+
+  // ---------- Dépenses du mois ----------
+  async function loadSpend() {
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const monthName = first.toLocaleDateString('fr-FR', { month: 'long' });
+
+    const { data, error } = await supabaseClient.from('expenses')
+      .select('amount, category, space_id')
+      .gte('spent_on', ymd(first)).lt('spent_on', ymd(next)).limit(2000);
+
+    spendBox.replaceChildren(sectionTitle('Dépenses de ' + monthName));
+    if (error) {
+      console.error(error);
+      spendBox.appendChild(el('p', 'Impossible de charger les dépenses.', 'margin:0;'));
+      return;
+    }
+
+    let perso = 0, shared = 0;
+    const cats = {};
+    (data || []).forEach(e => {
+      const cents = Math.round(Number(e.amount) * 100);
+      if (!Number.isFinite(cents)) return;
+      if (e.space_id) { shared += cents; return; }
+      perso += cents;
+      const c = e.category || 'Autre';
+      cats[c] = (cats[c] || 0) + cents;
+    });
+
+    if (perso === 0 && shared === 0) {
+      spendBox.appendChild(el('p', 'Aucune dépense ce mois-ci.', 'margin:0;'));
+      return;
+    }
+
+    spendBox.appendChild(el('p', euro(perso) + ' en perso', 'margin:0;font-size:22px;font-weight:700;'));
+
+    const top = Object.entries(cats).sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([c, v]) => c + ' ' + euro(v)).join(' · ');
+    if (top) {
+      const p = el('p', top, 'margin:4px 0 0;');
+      p.className = 'muted';
+      spendBox.appendChild(p);
+    }
+    if (shared > 0) {
+      const p = el('p', 'Espaces partagés : ' + euro(shared), 'margin:4px 0 0;');
+      p.className = 'muted';
+      spendBox.appendChild(p);
+    }
+  }
+
+  // ---------- Derniers documents ----------
+  async function loadDocsBox() {
+    const { data, error } = await supabaseClient.from('documents')
+      .select('id, title, category, file_path')
+      .order('created_at', { ascending: false }).limit(3);
+
+    docsBox.replaceChildren(sectionTitle('Derniers documents'));
+    if (error) {
+      console.error(error);
+      docsBox.appendChild(el('p', 'Impossible de charger les documents.', 'margin:0;'));
+      return;
+    }
+    if (!data || data.length === 0) {
+      docsBox.appendChild(el('p', 'Aucun document pour le moment.', 'margin:0;'));
+      return;
+    }
+
+    data.forEach(d => {
+      const row = document.createElement('div');
+      row.className = 'task';
+      row.appendChild(el('span', '📄 ' + (d.title || 'Sans titre') + ' — ' + (d.category || 'Autre')));
+
+      const open = el('button', 'Ouvrir');
+      open.type = 'button';
+      open.addEventListener('click', async () => {
+        const w = window.open('', '_blank');
+        if (!w) { alert("Ton navigateur a bloqué l'ouverture : autorise les fenêtres pop-up pour ce site."); return; }
+        const { data: signed, error: e } = await supabaseClient.storage
+          .from('life-documents').createSignedUrl(d.file_path, 120);
+        if (e || !signed) { console.error(e); w.close(); return; }
+        w.location.href = signed.signedUrl;
+      });
+      row.appendChild(open);
+      docsBox.appendChild(row);
+    });
+  }
+
+  // ---------- Chargement ----------
+  let loading = false;
+  let again = false;
+
+  async function load() {
+    if (loading) { again = true; return; }
+    loading = true;
+    try {
+      dateLine.textContent = new Date().toLocaleDateString('fr-FR', {
+        weekday: 'long', day: 'numeric', month: 'long'
+      });
+      const { data: { user } } = await supabaseClient.auth.getUser();
+      if (!user) {
+        tasksBox.replaceChildren(el('p', 'Connecte-toi pour voir ta journée.', 'margin:0;'));
+        spendBox.replaceChildren();
+        docsBox.replaceChildren();
+        return;
+      }
+      await Promise.all([loadTasksBox(), loadSpend(), loadDocsBox()]);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      loading = false;
+      if (again) { again = false; load(); }
+    }
+  }
+
+  // Se met à jour quand la liste des tâches est redessinée (ajout, fin d'une tâche…)
+  let timer = null;
+  if (typeof window.render === 'function') {
+    const original = window.render;
+    window.render = function () {
+      const result = original.apply(this, arguments);
+      clearTimeout(timer);
+      timer = setTimeout(load, 500);
+      return result;
+    };
+  }
+
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    if (!session || event === 'INITIAL_SESSION' || event === 'SIGNED_IN') setTimeout(load, 0);
+  });
+
+  // Retour sur l'onglet ou l'app, ou document rangé par le scan : on relit
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) load();
+  });
+
+  load();
+})();
+</script>
 </body></html>
