@@ -6085,4 +6085,17 @@ function showAiActions(actions) {
   new MutationObserver(compact).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
+  <script>
+// Calendrier v1 : les 7 colonnes tiennent dans l'écran
+(function () {
+  const style = document.createElement('style');
+  style.textContent = `
+    #calendar{max-width:100%;overflow:hidden}
+    #calendar div[style*="grid"]{grid-template-columns:repeat(7,minmax(0,1fr)) !important;gap:5px !important}
+    #calendar div[style*="grid"] > strong{text-align:center;font-size:13px;color:#a9b3cf}
+    #calendar div[style*="grid"] > button{min-width:0;width:100%;padding:11px 0;border-radius:12px;font-size:15px}
+  `;
+  document.head.appendChild(style);
+})();
+</script>
 </body></html>
