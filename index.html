@@ -5428,4 +5428,350 @@ function showAiActions(actions) {
   load();
 })();
 </script>
+  import { createClient } from "npm:@supabase/supabase-js@2";
+import webpush from "npm:web-push@3.6.7";
+
+// Prévient les autres membres d'un espace partagé quand une tâche ou un document y est ajouté.
+// Sécurité : la personne doit être connectée, membre de l'espace, et l'élément doit vraiment
+// venir d'être créé par elle dans cet espace (impossible d'envoyer un message inventé).
+
+const origin = "https://jglifeos.github.io";
+
+const cors = {
+  "Access-Control-Allow-Origin": origin,
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Content-Type": "application/json",
+};
+
+function reply(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), { status, headers: cors });
+}
+
+// Évite d'envoyer deux fois la même notification (mémoire de l'instance, au mieux)
+const already = new Set<string>();
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+  if (req.method !== "POST") return reply({ error: "Méthode interdite" }, 405);
+  if (req.headers.get("origin") !== origin) return reply({ error: "Non autorisé" }, 403);
+
+  const token = req.headers.get("Authorization")?.replace(/^Bearer /i, "");
+  if (!token) return reply({ error: "Connexion requise" }, 401);
+
+  const vapidPublic = Deno.env.get("VAPID_PUBLIC_KEY");
+  const vapidPrivate = Deno.env.get("VAPID_PRIVATE_KEY");
+  const vapidSubject = Deno.env.get("VAPID_SUBJECT");
+  if (!vapidPublic || !vapidPrivate || !vapidSubject) {
+    return reply({ error: "Clés de notification non configurées" }, 503);
+  }
+  webpush.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const publishable = JSON.parse(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS") || "{}");
+  const publicKey = publishable.default || Deno.env.get("SUPABASE_ANON_KEY");
+  const secrets = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") || "{}");
+  const serviceKey = secrets.default || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!publicKey || !serviceKey) return reply({ error: "Configuration manquante" }, 500);
+
+  const authClient = createClient(supabaseUrl, publicKey);
+  const { data: auth, error: authError } = await authClient.auth.getUser(token);
+  if (authError || !auth.user) return reply({ error: "Session invalide" }, 401);
+  const me = auth.user.id;
+
+  try {
+    const body = await req.json();
+    const spaceId = body.space_id;
+    const kind = body.kind;
+    const title = typeof body.title === "string" ? body.title.trim().slice(0, 180) : "";
+
+    if (
+      typeof spaceId !== "string" ||
+      !/^[0-9a-f-]{36}$/i.test(spaceId) ||
+      (kind !== "task" && kind !== "document") ||
+      !title
+    ) {
+      return reply({ error: "Demande invalide" }, 400);
+    }
+
+    const admin = createClient(supabaseUrl, serviceKey);
+
+    // L'appelant doit être membre de l'espace
+    const { data: members, error: membersError } = await admin
+      .from("space_members")
+      .select("user_id")
+      .eq("space_id", spaceId);
+    if (membersError) {
+      console.error("Erreur lecture membres", membersError);
+      return reply({ error: "Erreur de lecture" }, 500);
+    }
+    const memberIds = (members || []).map((m: any) => m.user_id as string);
+    if (!memberIds.includes(me)) return reply({ error: "Non autorisé" }, 403);
+
+    const recipients = memberIds.filter((id) => id !== me);
+    if (recipients.length === 0) return reply({ ok: true, sent: 0 });
+
+    // L'élément doit avoir été créé à l'instant, par l'appelant, dans cet espace
+    const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    const { data: found } = await admin
+      .from(kind === "task" ? "tasks" : "documents")
+      .select("id")
+      .eq("user_id", me)
+      .eq("space_id", spaceId)
+      .eq("title", title)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (!found || found.length === 0) return reply({ error: "Élément introuvable" }, 400);
+
+    const dedupeKey = `${kind}:${found[0].id}`;
+    if (already.has(dedupeKey)) return reply({ ok: true, sent: 0, duplicate: true });
+    already.add(dedupeKey);
+    if (already.size > 500) already.clear();
+
+    const { data: space } = await admin.from("spaces").select("name").eq("id", spaceId).maybeSingle();
+    const spaceName = String(space?.name || "ton espace").slice(0, 40);
+
+    const text = kind === "task"
+      ? `👥 ${spaceName} : nouvelle tâche « ${title.slice(0, 80)} »`
+      : `👥 ${spaceName} : nouveau document « ${title.slice(0, 80)} »`;
+    const payload = JSON.stringify({ title: "ELNOVIA", body: text, url: "./" });
+
+    const { data: subs } = await admin
+      .from("push_subscriptions")
+      .select("id, endpoint, p256dh, auth")
+      .in("user_id", recipients);
+
+    let sent = 0;
+    for (const s of subs || []) {
+      try {
+        await webpush.sendNotification(
+          { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
+          payload,
+          { TTL: 60 * 60 },
+        );
+        sent++;
+      } catch (e: any) {
+        if (e?.statusCode === 404 || e?.statusCode === 410) {
+          await admin.from("push_subscriptions").delete().eq("id", s.id);
+        } else {
+          console.error("Erreur envoi notification", e?.statusCode, e?.body || e);
+        }
+      }
+    }
+
+    return reply({ ok: true, sent });
+  } catch (e) {
+    console.error("Erreur de traitement", e);
+    return reply({ error: "Erreur de traitement" }, 500);
+  }
+});
+  <script>
+// Sauvegarde v1 : télécharger une copie de ses données (fichier ZIP : données, tableaux CSV et fichiers des documents)
+(function () {
+  if (document.getElementById('backupSection')) return;
+  const anchor = document.getElementById('inboxSection') ||
+    [...document.querySelectorAll('section.card')]
+      .find(s => (s.querySelector('h2')?.textContent || '').includes('Mes documents'));
+  if (!anchor) return;
+
+  const BUCKET = 'life-documents';
+  const JSZIP_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+
+  const el = (tag, text, css) => {
+    const n = document.createElement(tag);
+    if (text) n.textContent = text;
+    if (css) n.style.cssText = css;
+    return n;
+  };
+  const pad = n => String(n).padStart(2, '0');
+  const today = () => { const d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); };
+
+  const card = document.createElement('section');
+  card.className = 'card';
+  card.id = 'backupSection';
+
+  const heading = el('h2', '💾 Sauvegarde');
+  const intro = el('p', 'Télécharge une copie de tes données : tâches, dépenses, budgets, liste de documents et, si tu veux, les fichiers de tes documents. Garde-la dans un endroit sûr.');
+  intro.className = 'muted';
+
+  const filesLabel = el('label', null, 'display:block;margin:12px 0;');
+  const filesCheck = document.createElement('input');
+  filesCheck.type = 'checkbox';
+  filesCheck.checked = true;
+  filesLabel.append(filesCheck, ' Inclure les fichiers des documents (plus lourd)');
+
+  const prepareBtn = el('button', '⬇️ Préparer ma sauvegarde');
+  prepareBtn.type = 'button';
+  const saveBtn = el('button', '📥 Enregistrer le fichier', 'display:none;margin-top:10px;');
+  saveBtn.type = 'button';
+  const status = el('p', '', 'margin:10px 0 0;');
+
+  card.append(heading, intro, filesLabel, prepareBtn, saveBtn, status);
+  anchor.after(card);
+
+  // ----- Outils -----
+  function loadJsZip() {
+    if (window.JSZip) return Promise.resolve(window.JSZip);
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = JSZIP_URL;
+      s.onload = () => (window.JSZip ? resolve(window.JSZip) : reject(new Error('JSZip absent')));
+      s.onerror = () => reject(new Error('JSZip non chargé'));
+      document.head.appendChild(s);
+    });
+  }
+
+  function toCsv(rows) {
+    if (!rows || rows.length === 0) return '\uFEFF';
+    const cols = [];
+    rows.forEach(r => Object.keys(r).forEach(k => { if (!cols.includes(k)) cols.push(k); }));
+    const cell = v => {
+      if (v === null || v === undefined) return '';
+      let t = typeof v === 'object' ? JSON.stringify(v) : String(v);
+      if (/^[=+\-@]/.test(t)) t = "'" + t;               // évite l'exécution de formules dans Excel
+      return /[;"\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+    };
+    return '\uFEFF' + [cols.join(';')].concat(rows.map(r => cols.map(c => cell(r[c])).join(';'))).join('\r\n');
+  }
+
+  const safeName = t => String(t || 'document').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'document';
+
+  let zipBlob = null;
+  let zipName = '';
+
+  prepareBtn.addEventListener('click', async () => {
+    prepareBtn.disabled = true;
+    saveBtn.style.display = 'none';
+    zipBlob = null;
+
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser();
+      if (!user) { status.textContent = 'Connecte-toi pour sauvegarder tes données.'; return; }
+
+      status.textContent = 'Lecture de tes données…';
+      const notes = [];
+      const read = async (table) => {
+        const { data, error } = await supabaseClient.from(table).select('*').limit(10000);
+        if (error) { console.error(table, error); notes.push('Table « ' + table + ' » non lue.'); return []; }
+        return data || [];
+      };
+
+      const [tasks, expenses, documents, budgets, spaces] = await Promise.all([
+        read('tasks'), read('expenses'), read('documents'), read('budgets'), read('spaces')
+      ]);
+
+      const day = today();
+      const folder = 'elnovia-sauvegarde-' + day;
+      zipName = folder + '.zip';
+
+      const data = {
+        application: 'ELNOVIA',
+        exporte_le: new Date().toISOString(),
+        compte: user.email || user.id,
+        taches: tasks, depenses: expenses, documents, budgets, espaces: spaces
+      };
+
+      status.textContent = 'Préparation du fichier…';
+      let JSZip = null;
+      try { JSZip = await loadJsZip(); } catch (e) { console.error(e); }
+
+      if (!JSZip) {
+        // Plan B : sans outil de compression, on enregistre au moins le fichier de données
+        zipBlob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        zipName = folder + '-donnees.json';
+        status.textContent = '⚠️ La compression est indisponible : seul le fichier de données sera enregistré (sans les documents).';
+        saveBtn.style.display = 'inline-block';
+        return;
+      }
+
+      const zip = new JSZip();
+      const root = zip.folder(folder);
+      root.file('donnees.json', JSON.stringify(data, null, 2));
+      root.file('taches.csv', toCsv(tasks));
+      root.file('depenses.csv', toCsv(expenses));
+      root.file('documents.csv', toCsv(documents));
+      root.file('budgets.csv', toCsv(budgets));
+
+      let filesDone = 0;
+      let filesMissed = 0;
+      if (filesCheck.checked && documents.length > 0) {
+        const docsDir = root.folder('documents');
+        for (let i = 0; i < documents.length; i++) {
+          const d = documents[i];
+          status.textContent = 'Documents : ' + (i + 1) + ' sur ' + documents.length + '…';
+          try {
+            const { data: signed, error } = await supabaseClient.storage.from(BUCKET).createSignedUrl(d.file_path, 300);
+            if (error || !signed) throw error || new Error('lien indisponible');
+            const resp = await fetch(signed.signedUrl);
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const blob = await resp.blob();
+            const dot = String(d.file_path || '').lastIndexOf('.');
+            const ext = dot > -1 ? String(d.file_path).slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8) : 'bin';
+            docsDir.file(pad(i + 1) + '-' + safeName(d.title) + '.' + (ext || 'bin'), blob);
+            filesDone++;
+          } catch (e) {
+            console.error('Document non récupéré', d && d.id, e);
+            filesMissed++;
+          }
+        }
+      }
+
+      if (filesMissed > 0) notes.push(filesMissed + ' fichier(s) de documents n’ont pas pu être récupérés.');
+
+      root.file('LISEZ-MOI.txt', [
+        'Sauvegarde ELNOVIA du ' + day,
+        '',
+        'donnees.json : toutes tes données dans un seul fichier.',
+        'taches.csv, depenses.csv, documents.csv, budgets.csv : tableaux à ouvrir avec Excel ou Google Sheets (séparateur « ; »).',
+        'documents/ : les fichiers de tes documents' + (filesCheck.checked ? ' (' + filesDone + ').' : ' (non inclus cette fois).'),
+        '',
+        notes.length ? 'Remarques : ' + notes.join(' ') : 'Aucune remarque.'
+      ].join('\r\n'));
+
+      status.textContent = 'Compression…';
+      zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }, meta => {
+        status.textContent = 'Compression… ' + Math.round(meta.percent) + ' %';
+      });
+
+      const mo = zipBlob.size / (1024 * 1024);
+      status.textContent = '✅ Sauvegarde prête (' + (mo < 0.1 ? '< 0,1' : mo.toFixed(1).replace('.', ',')) + ' Mo : ' +
+        tasks.length + ' tâches, ' + expenses.length + ' dépenses, ' + documents.length + ' documents' +
+        (filesCheck.checked ? ', ' + filesDone + ' fichiers' : '') + '). Touche « Enregistrer le fichier ».' +
+        (notes.length ? ' ⚠️ ' + notes.join(' ') : '');
+      saveBtn.style.display = 'inline-block';
+    } catch (e) {
+      console.error(e);
+      status.textContent = 'Impossible de préparer la sauvegarde.';
+    } finally {
+      prepareBtn.disabled = false;
+    }
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    if (!zipBlob) return;
+    const type = zipName.endsWith('.json') ? 'application/json' : 'application/zip';
+    try {
+      const file = new File([zipBlob], zipName, { type });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'Sauvegarde ELNOVIA' });
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;   // la personne a fermé la fenêtre de partage
+      console.error(e);
+    }
+    const url = URL.createObjectURL(zipBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = zipName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  });
+})();
+</script>
 </body></html>
