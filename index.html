@@ -4699,4 +4699,121 @@ function showAiActions(actions) {
   }
 })();
 </script>
+  <script>
+// Tâches v3 : répétition (chaque jour, semaine, mois, année) et rappel à une heure précise
+(function () {
+  const form = document.getElementById('taskForm');
+  if (!form || document.getElementById('taskRepeat')) return;
+
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+
+  // Champs ajoutés au formulaire
+  const box = document.createElement('div');
+  box.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0;';
+
+  const repeat = document.createElement('select');
+  repeat.id = 'taskRepeat';
+  repeat.title = 'Répéter la tâche';
+  [
+    ['', '🔁 Ne se répète pas'],
+    ['daily', '🔁 Chaque jour'],
+    ['weekly', '🔁 Chaque semaine'],
+    ['monthly', '🔁 Chaque mois'],
+    ['yearly', '🔁 Chaque année']
+  ].forEach(([v, t]) => {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = t;
+    repeat.appendChild(o);
+  });
+
+  const timeWrap = document.createElement('label');
+  timeWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+  timeWrap.append('⏰ Rappel à');
+  const time = document.createElement('input');
+  time.type = 'time';
+  time.id = 'taskTime';
+  time.title = 'Heure du rappel (notification)';
+  timeWrap.appendChild(time);
+
+  box.append(repeat, timeWrap);
+
+  const anchor = form.querySelector('#taskSpace') || form.querySelector('#taskDueDate');
+  if (!anchor) return;
+  anchor.after(box);
+
+  const info = document.createElement('p');
+  info.className = 'muted';
+  info.style.margin = '6px 0 0';
+  form.appendChild(info);
+  let infoTimer = null;
+  const say = text => {
+    info.textContent = text;
+    clearTimeout(infoTimer);
+    infoTimer = setTimeout(() => { info.textContent = ''; }, 8000);
+  };
+
+  const REPEAT_TEXT = { daily: 'chaque jour', weekly: 'chaque semaine', monthly: 'chaque mois', yearly: 'chaque année' };
+
+  // On prend la main sur l'ajout d'une tâche (avant l'ancien code) pour enregistrer aussi la répétition et l'heure
+  document.addEventListener('submit', async ev => {
+    if (!ev.target || ev.target.id !== 'taskForm') return;
+    ev.stopPropagation();
+    ev.preventDefault();
+
+    const input = document.getElementById('taskInput');
+    const title = input.value.trim();
+    if (!title) return;
+
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) { alert('Connecte-toi pour ajouter une tâche.'); return; }
+
+    const category = document.getElementById('taskCategory').value;
+    const priority = document.getElementById('taskPriority').value;
+    const spaceEl = document.getElementById('taskSpace');
+    const spaceId = spaceEl ? spaceEl.value : '';
+    const rec = repeat.value || null;
+    const t = time.value;               // « HH:MM » ou vide
+    let day = document.getElementById('taskDueDate').value;
+
+    // Une répétition ou une heure sans date : on prend aujourd'hui (ou demain si l'heure est passée)
+    if (!day && (rec || t)) {
+      const d = new Date();
+      if (t && new Date(ymd(d) + 'T' + t + ':00') <= d) d.setDate(d.getDate() + 1);
+      day = ymd(d);
+    }
+
+    const row = {
+      user_id: user.id,
+      title,
+      status: 'todo',
+      category,
+      priority,
+      due_date: day ? day + 'T12:00:00' : null,
+      space_id: spaceId || null,
+      recurrence: rec,
+      remind_at: t && day ? new Date(day + 'T' + t + ':00').toISOString() : null
+    };
+
+    const { error } = await supabaseClient.from('tasks').insert(row);
+    if (error) {
+      console.error(error);
+      alert('Impossible d’ajouter la tâche.');
+      return;
+    }
+
+    input.value = '';
+    repeat.value = '';
+    time.value = '';
+
+    const bits = [];
+    if (rec) bits.push('se répète ' + REPEAT_TEXT[rec]);
+    if (row.remind_at) bits.push('rappel à ' + t);
+    if (day && (rec || t)) bits.unshift('prévue le ' + day.slice(8, 10) + '/' + day.slice(5, 7));
+    say('✅ Tâche ajoutée' + (bits.length ? ' (' + bits.join(', ') + ').' : '.'));
+
+    if (typeof window.loadTasks === 'function') await window.loadTasks();
+  }, true);
+})();
+</script>
 </body></html>
