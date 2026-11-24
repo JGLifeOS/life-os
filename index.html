@@ -7533,4 +7533,51 @@ function showAiActions(actions) {
   }).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
+                                                                 <script>
+// Finances : lignes de dépenses compactes (un nom court sur une ligne, détails en petit dessous)
+(function () {
+  if (window.__elnFinSlim) return;
+  window.__elnFinSlim = true;
+
+  const st = document.createElement('style');
+  st.textContent = `
+    .fin-row{display:grid !important;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:0 10px;padding:7px 0 !important}
+    .fin-row > span:first-child{min-width:0;font-size:15px !important;line-height:1.25 !important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .fin-row > span:first-child small{display:block;margin-top:1px !important;font-size:11.5px !important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .fin-row .amt{font-size:15px;text-align:right}
+    .fin-row .delete{background:transparent !important;border:0 !important;padding:2px 4px !important;font-size:14px !important;opacity:.55;min-width:0 !important;width:auto !important}
+  `;
+  document.head.appendChild(st);
+
+  function tidy(l) {
+    let t = String(l).replace(/^\s*(prlv|prelevement|paiement|cb|carte|vir|virement)\b\s*(sepa|inst|permanent)?\s*/i, '')
+      .replace(/\bcarte\s*x?\d+\b/ig, '').replace(/\b(prelevement|prlvt|sepa)\b/ig, '')
+      .replace(/\b[A-Za-z]*\d[A-Za-z0-9\/*]{5,}\b/g, '').replace(/\s*\/\s*$/, '').replace(/^\d{4,}\s+/, '')
+      .replace(/\s+/g, ' ').trim();
+    if (!t) t = String(l).trim();
+    if (t === t.toUpperCase()) t = t.toLowerCase().replace(/(^|\s)(\S)/g, (m, a, c) => a + c.toUpperCase());
+    return t.slice(0, 40);
+  }
+
+  function run() {
+    document.querySelectorAll('.fin-row:not([data-slim])').forEach(row => {
+      const label = row.querySelector(':scope > span');
+      const node = label && label.firstChild;
+      if (!node || node.nodeType !== 3) return;
+      row.dataset.slim = '1';
+      const full = node.textContent;
+      node.textContent = tidy(full);
+      label.title = full;
+    });
+  }
+
+  run();
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; setTimeout(run, 0); });
+  }).observe(document.body, { childList: true, subtree: true });
+})();
+</script>
  </body></html>
