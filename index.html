@@ -7649,4 +7649,125 @@ function showAiActions(actions) {
   document.head.appendChild(st);
 })();
 </script>
+                    <script>
+// Liste de courses v1 : perso ou partagée dans un espace
+(function () {
+  if (document.getElementById('shopSection')) return;
+  const anchor = document.getElementById('calendarSection') ||
+    [...document.querySelectorAll('section.card')].find(s => /tâche/i.test(s.querySelector('h2')?.textContent || ''));
+  if (!anchor) return;
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #shopSection .s-bar{display:flex;gap:8px;margin:8px 0}
+    #shopSection .s-bar input{flex:1;min-width:0}
+    #shopSection select{background:#0b1224;color:#f7f8ff;border:1px solid #35415e;border-radius:12px;padding:9px 12px;font-size:15px;max-width:100%}
+    #shopSection .s-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #1f2945;font-size:16px}
+    #shopSection .s-row.done span{text-decoration:line-through;opacity:.45}
+    #shopSection .s-row span{flex:1;min-width:0}
+    #shopSection .s-row input[type=checkbox]{width:22px;height:22px;flex:none}
+    #shopSection .s-x{background:transparent;color:#8390b3;border:0;padding:4px 8px;font-size:16px}
+    #shopSection .s-clear{margin-top:10px;background:#2a3454;color:#fff;border:0;border-radius:12px;padding:8px 14px;font-size:14px}
+  `;
+  document.head.appendChild(st);
+
+  const card = document.createElement('section');
+  card.className = 'card'; card.id = 'shopSection';
+  const h = document.createElement('h2'); h.textContent = '🛒 Courses';
+  const hid = document.createElement('span'); hid.style.display = 'none'; hid.textContent = ' tâche'; h.appendChild(hid);
+  const spaceSel = document.createElement('select');
+  const bar = document.createElement('form'); bar.className = 's-bar';
+  const input = document.createElement('input'); input.type = 'text'; input.placeholder = 'Ajouter (ex : lait, pain, œufs)'; input.maxLength = 200;
+  const add = document.createElement('button'); add.type = 'submit'; add.textContent = '＋';
+  bar.append(input, add);
+  const list = document.createElement('div');
+  const clear = document.createElement('button'); clear.type = 'button'; clear.className = 's-clear'; clear.style.display = 'none';
+  const msg = document.createElement('p'); msg.className = 'muted';
+  card.append(h, spaceSel, bar, list, clear, msg);
+  anchor.after(card);
+
+  let items = [], spaces = [], current = '';
+  const getUser = async () => (await supabaseClient.auth.getUser()).data.user;
+
+  async function loadSpaces() {
+    const { data } = await supabaseClient.from('spaces').select('id, name').order('name');
+    spaces = data || [];
+    const keep = spaceSel.value;
+    spaceSel.textContent = '';
+    const o = document.createElement('option'); o.value = ''; o.textContent = '👤 Ma liste'; spaceSel.appendChild(o);
+    spaces.forEach(s => { const x = document.createElement('option'); x.value = s.id; x.textContent = '👥 ' + s.name; spaceSel.appendChild(x); });
+    spaceSel.value = spaces.some(s => s.id === keep) ? keep : '';
+    spaceSel.style.display = spaces.length ? 'block' : 'none';
+    current = spaceSel.value;
+  }
+
+  async function load() {
+    try {
+      const user = await getUser(); if (!user) return;
+      let q = supabaseClient.from('shopping_items').select('id, label, done, space_id, created_at');
+      q = current ? q.eq('space_id', current) : q.is('space_id', null).eq('user_id', user.id);
+      const { data, error } = await q.order('created_at', { ascending: true }).limit(500);
+      if (error) { console.error(error); msg.textContent = 'La liste de courses n’est pas encore créée (étape Supabase).'; return; }
+      msg.textContent = '';
+      items = data || [];
+      render();
+    } catch (e) { console.error(e); }
+  }
+
+  function render() {
+    list.textContent = '';
+    if (!items.length) { const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'La liste est vide.'; list.appendChild(p); }
+    [...items].sort((a, b) => Number(a.done) - Number(b.done)).forEach(it => {
+      const row = document.createElement('div'); row.className = 's-row' + (it.done ? ' done' : '');
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = it.done;
+      cb.addEventListener('change', async () => {
+        it.done = cb.checked; render();
+        const { error } = await supabaseClient.from('shopping_items').update({ done: it.done }).eq('id', it.id);
+        if (error) { console.error(error); load(); }
+      });
+      const t = document.createElement('span'); t.textContent = it.label;
+      const x = document.createElement('button'); x.type = 'button'; x.className = 's-x'; x.textContent = '✕';
+      x.addEventListener('click', async () => {
+        items = items.filter(i => i !== it); render();
+        const { error } = await supabaseClient.from('shopping_items').delete().eq('id', it.id);
+        if (error) { console.error(error); load(); }
+      });
+      row.append(cb, t, x);
+      list.appendChild(row);
+    });
+    const n = items.filter(i => i.done).length;
+    clear.style.display = n ? 'inline-block' : 'none';
+    clear.textContent = '🧹 Vider les ' + n + ' acheté' + (n > 1 ? 's' : '');
+  }
+
+  bar.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const labels = input.value.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean).map(s => s.charAt(0).toUpperCase() + s.slice(1, 120));
+    if (!labels.length) return;
+    const user = await getUser(); if (!user) { msg.textContent = 'Connecte-toi d’abord.'; return; }
+    input.value = '';
+    const rows = labels.map(label => ({ user_id: user.id, space_id: current || null, label }));
+    const { error } = await supabaseClient.from('shopping_items').insert(rows);
+    if (error) { console.error(error); msg.textContent = 'Impossible d’ajouter.'; return; }
+    load();
+  });
+
+  clear.addEventListener('click', async () => {
+    const ids = items.filter(i => i.done).map(i => i.id);
+    if (!ids.length) return;
+    const { error } = await supabaseClient.from('shopping_items').delete().in('id', ids);
+    if (error) { console.error(error); return; }
+    load();
+  });
+
+  spaceSel.addEventListener('change', () => { current = spaceSel.value; load(); });
+
+  (async () => { await loadSpaces(); await load(); })();
+  // met à jour la liste quand on revient sur l'appli, sur l'onglet Tâches, ou toutes les 30 s
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+  document.addEventListener('click', e => { if (e.target.closest && e.target.closest('#elnTabs')) setTimeout(load, 300); });
+  setInterval(() => { if (!document.hidden && card.offsetParent !== null) load(); }, 30000);
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(async () => { await loadSpaces(); load(); }, 500)); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
