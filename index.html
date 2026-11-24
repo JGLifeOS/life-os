@@ -7119,7 +7119,7 @@ function showAiActions(actions) {
   try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 500)); } catch (e) { /* ignoré */ }
 })();
 </script>
-  <script>
+ <script>
 // Import de relevé bancaire v1 : lit un fichier CSV de la banque, classe les dépenses et les ajoute
 (function () {
   if (document.getElementById('bankSection')) return;
@@ -7130,14 +7130,23 @@ function showAiActions(actions) {
 
   const CATS = ['Courses', 'Logement', 'Transport', 'Loisirs', 'Santé', 'Abonnements', 'Autre'];
   const RULES = [
-    ['Abonnements', /netflix|spotify|disney|canal\+?|deezer|amazon prime|prime video|youtube|apple\.com|icloud|google (one|storage)|orange|sfr|bouygues|free mobile|freebox|\bfree\b|salle de sport|basic.?fit|fitness|orange bleue|assurance|mutuelle|abonnement|openai|chatgpt|adobe|microsoft/i],
-    ['Courses', /carrefour|leclerc|intermarch|auchan|lidl|aldi|monoprix|casino|super u|\bu express|picard|boulangerie|boucherie|primeur|biocoop|grand frais|supermarch|market/i],
-    ['Logement', /loyer|edf|engie|eau |veolia|suez|electricit|gaz|syndic|copropri|taxe fonci|taxe d.habitation|leroy merlin|castorama|ikea|brico/i],
-    ['Transport', /sncf|ratp|uber|bolt|total|esso|shell|bp |station|carburant|essence|peage|vinci|autoroute|parking|navigo|blablacar|garage|norauto|midas|ter /i],
-    ['Santé', /pharmacie|docteur|dr |medecin|dentiste|kine|opticien|optique|hopital|clinique|laboratoire|ameli|doctolib/i],
-    ['Loisirs', /restaurant|resto|mcdo|mcdonald|burger|kfc|pizz|cafe|bar |cinema|ugc|pathe|fnac|steam|playstation|amazon|decathlon|booking|airbnb|zara|h&m|kiabi|cultura|bowling|spa /i]
+    ['Abonnements', /netflix|spotify|disney|canal\+?|deezer|amazon prime|prime video|youtube|apple\.com|icloud|google (one|storage)|orange|sfr|bouygues|free mobile|freebox|\bfree\b|salle de sport|basic.?fit|fitness|orange bleue|assurance|mutuelle|abonnement|openai|chatgpt|adobe|microsoft|maif|macif|axa|groupama|april|swisslife|harmonie/i],
+    ['Logement', /loyer|edf|totalenergies.*(elec|gaz)|(elec|gaz).*totalenergies|engie|\beau\b|veolia|suez|electricit|\bgaz\b|syndic|copropri|taxe fonci|taxe d.habitation|leroy merlin|castorama|ikea|brico|credit immo|pret immo|echeance pret/i],
+    ['Courses', /carrefour|leclerc|intermarch|auchan|lidl|aldi|monoprix|casino|super u|\bu express|picard|boulangerie|boucherie|primeur|biocoop|grand frais|supermarch|market|epicerie|spar\b/i],
+    ['Transport', /sncf|ratp|uber|bolt|total|esso|shell|\bbp\b|station|carburant|essence|peage|vinci|autoroute|parking|navigo|blablacar|garage|norauto|midas|\bter\b|ayvens|leasys|jonquera|cepsa|repsol/i],
+    ['Santé', /pharmacie|docteur|\bdr\b|medecin|dentiste|kine|opticien|optique|hopital|clinique|laboratoire|ameli|doctolib|osteo/i],
+    ['Loisirs', /restaurant|resto|mcdo|mcdonald|burger|kfc|pizz|cafe|\bbar\b|cinema|ugc|pathe|fnac|steam|playstation|amazon|decathlon|booking|airbnb|zara|h&m|kiabi|cultura|bowling|\bspa\b|bar tabac|tabac|brasserie|creperie/i]
   ];
-  const categorize = l => { for (const [c, re] of RULES) if (re.test(l)) return c; return 'Autre'; };
+  const categorize = l => { const t = String(l).normalize('NFD').replace(/[̀-ͯ]/g, ''); for (const [c, re] of RULES) if (re.test(t)) return c; return 'Autre'; };
+
+  const INTERNAL = /(vir|virement).*(livret|epargne|\bpel\b|\bldd\b|\blep\b|compte)|livret|epargne/i;
+  const norm = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  function tidy(l) {
+    let t = String(l).replace(/^\s*(prlv|prelevement|paiement|cb|carte|vir|virement)\b\s*(sepa|inst|permanent)?\s*/i, '').replace(/\bcarte\s*x?\d+\b/ig, '').replace(/^\d{4,}\s+/, '').replace(/\s+/g, ' ').trim();
+    if (!t) t = String(l).trim();
+    if (t === t.toUpperCase()) t = t.toLowerCase().replace(/(^|\s)(\S)/g, (m, a, c) => a + c.toUpperCase());
+    return t.slice(0, 70);
+  }
 
   const st = document.createElement('style');
   st.textContent = `
@@ -7242,7 +7251,7 @@ function showAiActions(actions) {
       if (isNaN(amt) || amt >= 0) return;                       // on garde seulement les dépenses
       const label = String(r[labI] || '').replace(/\s+/g, ' ').replace(/\b\d{1,2}[\/.]\d{1,2}([\/.]\d{2,4})?\b/g, '').trim().slice(0, 80);
       if (!label) return;
-      out.push({ date: d, label, amount: Math.round(Math.abs(amt) * 100) / 100 });
+      out.push({ date: d, raw: label, label: tidy(label), amount: Math.round(Math.abs(amt) * 100) / 100 });
     });
     return out;
   }
@@ -7262,11 +7271,11 @@ function showAiActions(actions) {
   function renderPreview() {
     list.textContent = '';
     items.forEach(it => {
-      const row = document.createElement('div'); row.className = 'b-row' + (it.dup ? ' dup' : '');
+      const row = document.createElement('div'); row.className = 'b-row' + (it.dup || it.internal ? ' dup' : '');
       const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = it.on;
       cb.addEventListener('change', () => { it.on = cb.checked; updateButton(); });
       const l = document.createElement('div'); l.className = 'l'; l.textContent = it.label;
-      const sm = document.createElement('small'); sm.textContent = short(it.date) + (it.dup ? ' · déjà dans ELNOVIA' : ''); l.appendChild(sm);
+      const sm = document.createElement('small'); sm.textContent = short(it.date) + (it.dup ? ' · déjà dans ELNOVIA' : it.internal ? ' · virement vers ton épargne (non coché)' : ''); l.appendChild(sm);
       const sel = document.createElement('select');
       CATS.forEach(c => { const o = document.createElement('option'); o.value = o.textContent = c; if (c === it.category) o.selected = true; sel.appendChild(o); });
       sel.addEventListener('change', () => { it.category = sel.value; });
@@ -7300,7 +7309,8 @@ function showAiActions(actions) {
       items = found.sort((a, b) => b.date.localeCompare(a.date)).map(i => {
         const key = i.date + '|' + i.amount.toFixed(2);
         const dup = known.has(key);
-        return { ...i, category: categorize(i.label), dup, on: !dup, key };
+        const internal = INTERNAL.test(norm(i.raw));
+        return { ...i, category: categorize(i.raw), dup, internal, on: !dup && !internal, key };
       });
       const dupN = items.filter(i => i.dup).length;
       summary.textContent = items.length + ' dépenses lues, total ' + eur(items.reduce((t, i) => t + i.amount, 0)) +
@@ -7328,7 +7338,99 @@ function showAiActions(actions) {
   });
 })();
 </script>
-                                                                 <script>
+  <script>
+// Bilan du mois : touche une catégorie pour voir toutes ses dépenses
+(function () {
+  const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+  const pad = n => String(n).padStart(2, '0');
+  const DATE_IN_TITLE = /\s*\b\d{1,2}[\/.\-]\d{1,2}([\/.\-]\d{2,4})?\b/g;
+  const eur = n => Number(n).toFixed(2).replace('.', ',') + ' €';
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #recapSection .cat-line{cursor:pointer;-webkit-tap-highlight-color:transparent}
+    #recapSection .cat-line > span:first-child::after{content:' ›';opacity:.5;display:inline-block;transition:transform .15s}
+    #recapSection .cat-line.open > span:first-child::after{transform:rotate(90deg)}
+    #recapSection .cat-detail{margin:6px 0 4px;padding:4px 10px;background:#0b1224;border-radius:12px}
+    #recapSection .cat-item{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid #1f2945;font-size:14px}
+    #recapSection .cat-item:last-child{border-bottom:0}
+    #recapSection .cat-item span:first-child{flex:1;min-width:0}
+    #recapSection .cat-item small{display:block;color:#8390b3;font-size:11px}
+    #recapSection .cat-item b{white-space:nowrap}
+  `;
+  document.head.appendChild(st);
+
+  function currentMonth(card) {
+    const t = (card.querySelector('strong')?.textContent || '').toLowerCase().trim();
+    const m = t.match(/([a-zéûè]+)\s+(\d{4})/);
+    if (!m) return null;
+    const i = MONTHS.indexOf(m[1]);
+    return i < 0 ? null : { y: Number(m[2]), m: i + 1 };
+  }
+
+  async function showDetail(card, line, cat) {
+    const track = line.nextElementSibling;
+    const existing = track && track.nextElementSibling && track.nextElementSibling.classList.contains('cat-detail')
+      ? track.nextElementSibling : null;
+    if (existing) { existing.remove(); line.classList.remove('open'); return; }
+
+    const mo = currentMonth(card);
+    if (!mo) return;
+    const panel = document.createElement('div');
+    panel.className = 'cat-detail';
+    panel.textContent = 'Chargement…';
+    track.after(panel);
+    line.classList.add('open');
+
+    const nextY = mo.m === 12 ? mo.y + 1 : mo.y, nextM = mo.m === 12 ? 1 : mo.m + 1;
+    let q = supabaseClient.from('expenses').select('id, label, amount, spent_on, space_id')
+      .eq('category', cat)
+      .gte('spent_on', mo.y + '-' + pad(mo.m) + '-01')
+      .lt('spent_on', nextY + '-' + pad(nextM) + '-01');
+    const scope = card.querySelector('select')?.value || '';
+    if (scope === 'perso') q = q.is('space_id', null);
+    else if (scope) q = q.eq('space_id', scope);
+    const { data, error } = await q.order('spent_on', { ascending: false }).limit(500);
+    panel.textContent = '';
+    if (error) { console.error(error); panel.textContent = 'Impossible de charger.'; return; }
+    if (!data || !data.length) { panel.textContent = 'Aucune dépense.'; return; }
+    data.forEach(r => {
+      const row = document.createElement('div'); row.className = 'cat-item';
+      const l = document.createElement('span');
+      l.textContent = (String(r.label || 'Sans titre').replace(DATE_IN_TITLE, '').trim() || r.label);
+      const sm = document.createElement('small');
+      sm.textContent = parseInt(String(r.spent_on).slice(8, 10), 10) + ' ' + MOIS[parseInt(String(r.spent_on).slice(5, 7), 10) - 1];
+      l.appendChild(sm);
+      const a = document.createElement('b'); a.textContent = eur(r.amount);
+      row.append(l, a);
+      panel.appendChild(row);
+    });
+  }
+
+  function run() {
+    const card = document.getElementById('recapSection');
+    if (!card) return;
+    card.querySelectorAll('div:not([data-cat])').forEach(d => {
+      if (d.children.length !== 2 || d.children[0].tagName !== 'SPAN' || d.children[1].tagName !== 'SPAN') return;
+      if (!/€\s*·\s*\d+\s*%/.test(d.children[1].textContent)) return;
+      d.dataset.cat = '1';
+      d.classList.add('cat-line');
+      const cat = d.children[0].textContent.replace(/\s*›\s*$/, '').trim();
+      d.addEventListener('click', () => showDetail(card, d, cat));
+    });
+  }
+
+  run();
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; run(); });
+  }).observe(document.body, { childList: true, subtree: true });
+})();
+</script>
+  <script>
 // Bilan du mois : touche une catégorie pour voir toutes ses dépenses
 (function () {
   const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
