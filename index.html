@@ -7770,4 +7770,155 @@ function showAiActions(actions) {
   try { supabaseClient.auth.onAuthStateChange(() => setTimeout(async () => { await loadSpaces(); load(); }, 500)); } catch (e) { /* ignoré */ }
 })();
 </script>
+                    <script>
+// Abonnements v1 : repère les dépenses qui reviennent chaque mois (même nom, même montant)
+(function () {
+  if (document.getElementById('subsSection')) return;
+
+  const MONTHS_BACK = 7;
+  const IGNORE_KEY = 'elnoviaSubsIgnored';
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #subsSection .subs-total{font-size:26px;font-weight:700;margin:4px 0 2px}
+    #subsSection .subs-sub{color:#a9b3cf;font-size:13px;margin:0 0 10px}
+    #subsSection .subs-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #1f2945}
+    #subsSection .subs-name{flex:1;min-width:0}
+    #subsSection .subs-name b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #subsSection .subs-name small{color:#8390b3;font-size:12px}
+    #subsSection .subs-amt{font-weight:700;white-space:nowrap}
+    #subsSection .subs-x{background:transparent;color:#8390b3;border:0;padding:4px 8px;font-size:16px}
+  `;
+  document.head.appendChild(st);
+
+  const card = document.createElement('section');
+  card.className = 'card';
+  card.id = 'subsSection';
+  const h = document.createElement('h2');
+  h.textContent = '🔁 Abonnements';
+  const hid = document.createElement('span');          // sert à classer la carte dans l'onglet Argent
+  hid.style.display = 'none';
+  hid.textContent = ' financ';
+  h.appendChild(hid);
+  const body = document.createElement('div');
+  card.append(h, body);
+
+  const anchor = document.getElementById('recapSection') || document.getElementById('budgetSection') ||
+    [...document.querySelectorAll('section.card')].find(s => /financ/i.test(s.querySelector('h2')?.textContent || ''));
+  if (!anchor) return;
+  anchor.after(card);
+
+  const fmt = n => n.toFixed(2).replace('.', ',').replace(',00', '') + ' €';
+  const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+
+  function norm(label) {
+    return String(label || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/\d+/g, ' ').replace(/[^a-z\s]/g, ' ')
+      .replace(/\b(prelevement|prlv|paiement|cb|carte|abonnement|facture|sepa|de|du|la|le|les|des|mensuel|mois)\b/g, ' ')
+      .replace(/\s+/g, ' ').trim().split(' ').slice(0, 3).join(' ');
+  }
+  const median = a => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+
+  // Exposé pour pouvoir tester la détection
+  function detect(rows, todayStr) {
+    const groups = {};
+    rows.forEach(r => {
+      const k = norm(r.label);
+      if (!k || k.length < 3) return;
+      (groups[k] = groups[k] || []).push(r);
+    });
+    const today = new Date(todayStr + 'T12:00:00');
+    const out = [];
+    Object.keys(groups).forEach(k => {
+      const med = median(groups[k].map(r => Number(r.amount)));
+      const tol = Math.max(0.5, med * 0.06);
+      const similar = groups[k].filter(r => Math.abs(Number(r.amount) - med) <= tol);
+      const byMonth = {};
+      similar.forEach(r => { byMonth[String(r.spent_on).slice(0, 7)] = r; });
+      const months = Object.keys(byMonth).sort();
+      if (months.length < 2) return;
+      // il faut au moins deux mois qui se suivent
+      const idx = m => Number(m.slice(0, 4)) * 12 + Number(m.slice(5, 7));
+      let consecutive = false;
+      for (let i = 1; i < months.length; i++) if (idx(months[i]) - idx(months[i - 1]) === 1) consecutive = true;
+      if (!consecutive) return;
+      const last = byMonth[months[months.length - 1]];
+      const lastDate = new Date(String(last.spent_on).slice(0, 10) + 'T12:00:00');
+      const age = (today - lastDate) / 86400000;
+      if (age > 62) return;                                 // plus de trace récente : probablement résilié
+      const day = lastDate.getDate();
+      let next = new Date(lastDate.getFullYear(), lastDate.getMonth() + 1, 1, 12);
+      next = new Date(next.getFullYear(), next.getMonth(), Math.min(day, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()), 12);
+      if (next < today) next = new Date(next.getFullYear(), next.getMonth() + 1, Math.min(day, 28), 12);
+      out.push({ key: k, label: String(last.label).replace(/\s*\b\d{1,2}[\/.\-]\d{1,2}([\/.\-]\d{2,4})?\b/g,'').replace(/\s*\b\d{1,2}[\/.\-]\d{4}\b/g,'').trim() || last.label, amount: med, day, next, count: months.length });
+    });
+    return out.sort((a, b) => b.amount - a.amount);
+  }
+  window.__elnDetectSubs = detect;
+
+  function ignored() { try { return JSON.parse(localStorage.getItem(IGNORE_KEY) || '[]'); } catch (e) { return []; } }
+  function ignore(k) { try { localStorage.setItem(IGNORE_KEY, JSON.stringify(ignored().concat(k))); } catch (e) { /* ignoré */ } }
+
+  function render(list) {
+    body.textContent = '';
+    const ign = ignored();
+    list = list.filter(s => !ign.includes(s.key));
+    if (!list.length) {
+      const p = document.createElement('p');
+      p.className = 'muted';
+      p.textContent = 'Aucun abonnement repéré pour l’instant. Ils apparaissent dès qu’une même dépense revient deux mois de suite.';
+      body.appendChild(p);
+      return;
+    }
+    const month = list.reduce((t, s) => t + s.amount, 0);
+    const tot = document.createElement('div');
+    tot.className = 'subs-total';
+    tot.textContent = fmt(month) + ' / mois';
+    const sub = document.createElement('p');
+    sub.className = 'subs-sub';
+    sub.textContent = list.length + ' abonnement' + (list.length > 1 ? 's' : '') + ' · ' + fmt(month * 12) + ' par an';
+    body.append(tot, sub);
+    list.forEach(s => {
+      const row = document.createElement('div');
+      row.className = 'subs-row';
+      const name = document.createElement('div');
+      name.className = 'subs-name';
+      const b = document.createElement('b'); b.textContent = s.label;
+      const sm = document.createElement('small');
+      sm.textContent = 'Prochain vers le ' + s.next.getDate() + ' ' + MOIS[s.next.getMonth()];
+      name.append(b, sm);
+      const amt = document.createElement('span'); amt.className = 'subs-amt'; amt.textContent = fmt(s.amount);
+      const x = document.createElement('button'); x.type = 'button'; x.className = 'subs-x'; x.textContent = '✕';
+      x.title = 'Ce n’est pas un abonnement';
+      x.addEventListener('click', () => { ignore(s.key); render(list); });
+      row.append(name, amt, x);
+      body.appendChild(row);
+    });
+  }
+
+  let busy = false, lastRun = 0;
+  async function load() {
+    if (busy || Date.now() - lastRun < 20000) return;
+    busy = true;
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser();
+      if (!user) return;
+      const d = new Date(); d.setMonth(d.getMonth() - MONTHS_BACK, 1);
+      const since = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01';
+      const { data, error } = await supabaseClient.from('expenses')
+        .select('label, amount, spent_on').gte('spent_on', since).limit(3000);
+      if (error) { console.error(error); return; }
+      const t = new Date();
+      const todayStr = t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+      render(detect(data || [], todayStr));
+      lastRun = Date.now();
+    } catch (e) { console.error(e); } finally { busy = false; }
+  }
+
+  load();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+  document.addEventListener('click', e => { if (e.target.closest && e.target.closest('#elnTabs')) setTimeout(load, 300); });
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 500)); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
