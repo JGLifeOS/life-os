@@ -6723,4 +6723,18 @@ function showAiActions(actions) {
   new MutationObserver(layout).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
+  <script>
+// Assistant : on enlève le grand vide sous « Toujours lire les réponses »
+(function () {
+  const style = document.createElement('style');
+  style.textContent = `
+    #life-ai{padding-bottom:12px !important}
+    #life-ai p:empty{display:none !important;margin:0 !important}
+    #life-ai div:empty{display:none !important}
+    #life-ai > *:last-child{margin-bottom:0 !important}
+    #life-ai label{margin-bottom:0 !important}
+  `;
+  document.head.appendChild(style);
+})();
+</script>
 </body></html>
