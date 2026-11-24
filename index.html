@@ -7338,7 +7338,7 @@ function showAiActions(actions) {
   });
 })();
 </script>
-  <script>
+ <script>
 // Bilan du mois : touche une catégorie pour voir toutes ses dépenses
 (function () {
   const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
@@ -7346,15 +7346,25 @@ function showAiActions(actions) {
   const pad = n => String(n).padStart(2, '0');
   const DATE_IN_TITLE = /\s*\b\d{1,2}[\/.\-]\d{1,2}([\/.\-]\d{2,4})?\b/g;
   const RULES = [
-    ['Abonnements', /netflix|spotify|disney|canal\+?|deezer|amazon prime|prime video|youtube|apple\.com|icloud|google (one|storage)|orange|sfr|bouygues|free mobile|freebox|\bfree\b|salle de sport|basic.?fit|fitness|orange bleue|assurance|mutuelle|abonnement|openai|chatgpt|adobe|microsoft|maif|macif|axa|groupama|april|swisslife|harmonie/i],
+    ['Abonnements', /netflix|spotify|disney|canal\+?|deezer|amazon prime|prime video|youtube|apple\.com|apple com|icloud|google (one|storage)|orange|sfr|bouygues|free mobile|freebox|\bfree\b|salle de sport|basic.?fit|fitness|orange bleue|assurance|mutuelle|abonnement|openai|chatgpt|anthropic|claude|adobe|microsoft|maif|macif|axa|groupama|april|swisslife|harmonie|paypal/i],
     ['Logement', /loyer|edf|totalenergies.*(elec|gaz)|(elec|gaz).*totalenergies|engie|\beau\b|veolia|suez|electricit|\bgaz\b|syndic|copropri|taxe fonci|taxe d.habitation|leroy merlin|castorama|ikea|brico|credit immo|pret immo|echeance pret/i],
-    ['Courses', /carrefour|leclerc|intermarch|auchan|lidl|aldi|monoprix|casino|super u|\bu express|picard|boulangerie|boucherie|primeur|biocoop|grand frais|supermarch|market|epicerie|spar\b/i],
-    ['Transport', /sncf|ratp|uber|bolt|total|esso|shell|\bbp\b|station|carburant|essence|peage|vinci|autoroute|parking|navigo|blablacar|garage|norauto|midas|\bter\b|ayvens|leasys|jonquera|cepsa|repsol/i],
-    ['Santé', /pharmacie|docteur|\bdr\b|medecin|dentiste|kine|opticien|optique|hopital|clinique|laboratoire|ameli|doctolib|osteo/i],
-    ['Loisirs', /restaurant|resto|mcdo|mcdonald|burger|kfc|pizz|cafe|\bbar\b|cinema|ugc|pathe|fnac|steam|playstation|amazon|decathlon|booking|airbnb|zara|h&m|kiabi|cultura|bowling|\bspa\b|bar tabac|tabac|brasserie|creperie/i]
+    ['Courses', /carrefour|leclerc|intermarch|auchan|lidl|aldi|monoprix|casino|super u|\bu express|picard|boulangerie|boucherie|primeur|biocoop|grand frais|supermarch|supermercado|market|epicerie|spar\b/i],
+    ['Transport', /sncf|ratp|uber|bolt|total|esso|shell|\bbp\b|station|carburant|essence|peage|vinci|autoroute|areas|parking|navigo|blablacar|garage|norauto|midas|\bter\b|ayvens|leasys|cepsa|repsol|devred.*carbu/i],
+    ['Santé', /pharmacie|docteur|\bdr\b|medecin|dentiste|kine|opticien|optique|hopital|clinique|laboratoire|ameli|doctolib|osteo|teleconsultation|mutuelle sante/i],
+    ['Loisirs', /restaurant|resto|mcdo|mc ?donald|burger|kfc|pizz|cafe|\bbar\b|cinema|ugc|pathe|fnac|steam|playstation|amazon|decathlon|booking|airbnb|zara|h&m|kiabi|cultura|bowling|\bspa\b|tabac|brasserie|creperie|winamax|fdj|\bpmu\b|parions|cour des garcons|sauvetage|leboncoin|devred|jonquera.*tur|\btur\b/i]
   ];
-  const categorize = l => { const t = String(l).normalize('NFD').replace(/[̀-ͯ]/g, ''); for (const [c, re] of RULES) if (re.test(t)) return c; return 'Autre'; };
+  const MEMKEY = 'elnoviaCatMemory';
+  const memKey = l => String(l).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\b(prlv|sepa|cb|carte|x?\d+)\b/g, ' ').replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').slice(0, 2).join(' ');
+  const memGet = () => { try { return JSON.parse(localStorage.getItem(MEMKEY) || '{}'); } catch (e) { return {}; } };
+  const memSet = (l, c) => { try { const m = memGet(); m[memKey(l)] = c; localStorage.setItem(MEMKEY, JSON.stringify(m)); } catch (e) { /* ignoré */ } };
+  const categorize = l => { const m = memGet()[memKey(l)]; if (m) return m; const t = String(l).normalize('NFD').replace(/[̀-ͯ]/g, ''); for (const [c, re] of RULES) if (re.test(t)) return c; return 'Autre'; };
   const CATS = ['Courses', 'Logement', 'Transport', 'Loisirs', 'Santé', 'Abonnements', 'Autre'];
+  function tidy(l) {
+    let t = String(l).replace(/^\s*(prlv|prelevement|paiement|cb|carte|vir|virement)\b\s*(sepa|inst|permanent)?\s*/i, '').replace(/\bcarte\s*x?\d+\b/ig, '').replace(/\b(prelevement|prlvt|sepa)\b/ig, '').replace(/\b[A-Z0-9]{10,}\b/g, '').replace(/^\d{4,}\s+/, '').replace(/\s+/g, ' ').trim();
+    if (!t) t = String(l).trim();
+    if (t === t.toUpperCase()) t = t.toLowerCase().replace(/(^|\s)(\S)/g, (m, a, c) => a + c.toUpperCase());
+    return t.slice(0, 60);
+  }
   const eur = n => Number(n).toFixed(2).replace('.', ',') + ' €';
 
   const st = document.createElement('style');
@@ -7363,13 +7373,14 @@ function showAiActions(actions) {
     #recapSection .cat-line > span:first-child::after{content:' ›';opacity:.5;display:inline-block;transition:transform .15s}
     #recapSection .cat-line.open > span:first-child::after{transform:rotate(90deg)}
     #recapSection .cat-detail{margin:6px 0 4px;padding:4px 10px;background:#0b1224;border-radius:12px}
-    #recapSection .cat-item{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid #1f2945;font-size:14px}
+    #recapSection .cat-item{display:grid;grid-template-columns:1fr auto;gap:3px 10px;align-items:start;padding:8px 0;border-bottom:1px solid #1f2945;font-size:14px}
     #recapSection .cat-item:last-child{border-bottom:0}
-    #recapSection .cat-item span:first-child{flex:1;min-width:0}
-    #recapSection .cat-item small{display:block;color:#8390b3;font-size:11px}
+    #recapSection .cat-item .nm{min-width:0;overflow-wrap:anywhere}
+    #recapSection .cat-item .nm small{display:block;color:#8390b3;font-size:11px}
     #recapSection .cat-item b{white-space:nowrap}
-    #recapSection .cat-item select{background:#121a30;color:#f7f8ff;border:1px solid #35415e;border-radius:10px;padding:4px 6px;font-size:12px;max-width:100px}
-    #recapSection .cat-item .cat-x{background:transparent;border:0;color:#8390b3;padding:2px 6px;font-size:15px}
+    #recapSection .cat-item .ctl{grid-column:1 / 3;display:flex;align-items:center;gap:8px}
+    #recapSection .cat-item select{height:30px;width:auto;background:#121a30;color:#f7f8ff;border:1px solid #35415e;border-radius:9px;padding:0 8px;font-size:12px}
+    #recapSection .cat-item .cat-x{background:transparent;border:0;color:#8390b3;padding:2px 8px;font-size:15px;margin-left:auto}
     #recapSection .cat-auto{background:#2a3454;color:#fff;border:0;border-radius:10px;padding:7px 12px;font-size:13px;margin:4px 0 6px}
   `;
   document.head.appendChild(st);
@@ -7426,6 +7437,7 @@ function showAiActions(actions) {
       auto.addEventListener('click', async () => {
         auto.disabled = true; let n = 0;
         for (const x of rowsEls) {
+          if (!x.row.isConnected) continue;
           const c = categorize(x.r.label);
           if (c !== 'Autre' && await move(x.r, x.row, c)) n++;
         }
@@ -7435,23 +7447,33 @@ function showAiActions(actions) {
     }
     data.forEach(r => {
       const row = document.createElement('div'); row.className = 'cat-item';
-      const l = document.createElement('span');
-      l.textContent = (String(r.label || 'Sans titre').replace(DATE_IN_TITLE, '').trim() || r.label);
+      const l = document.createElement('div'); l.className = 'nm';
+      l.textContent = tidy(String(r.label || 'Sans titre').replace(DATE_IN_TITLE, '').trim());
       const sm = document.createElement('small');
       sm.textContent = parseInt(String(r.spent_on).slice(8, 10), 10) + ' ' + MOIS[parseInt(String(r.spent_on).slice(5, 7), 10) - 1];
       l.appendChild(sm);
+      const a = document.createElement('b'); a.textContent = eur(r.amount);
+      const ctl = document.createElement('div'); ctl.className = 'ctl';
       const sel = document.createElement('select');
       CATS.forEach(c => { const o = document.createElement('option'); o.value = o.textContent = c; if (c === cat) o.selected = true; sel.appendChild(o); });
-      sel.addEventListener('change', () => { if (sel.value !== cat) move(r, row, sel.value).then(ok => { if (!ok) sel.value = cat; }); });
-      const a = document.createElement('b'); a.textContent = eur(r.amount);
-      const x = document.createElement('button'); x.type = 'button'; x.className = 'cat-x'; x.textContent = '✕'; x.title = 'Supprimer cette dépense';
+      sel.addEventListener('change', async () => {
+        const nc = sel.value; if (nc === cat) return;
+        memSet(r.label, nc);                                        // l'appli retient ce choix
+        const k = memKey(r.label);
+        const same = rowsEls.filter(x => x.row.isConnected && memKey(x.r.label) === k);
+        let n = 0;
+        for (const x of same) if (await move(x.r, x.row, nc)) n++;
+        if (n > 1) { const note = document.createElement('p'); note.className = 'muted'; note.style.margin = '4px 0'; note.textContent = '✅ ' + n + ' dépenses « ' + tidy(r.label) + ' » déplacées vers ' + nc + '.'; panel.prepend(note); setTimeout(() => note.remove(), 4000); }
+      });
+      const x = document.createElement('button'); x.type = 'button'; x.className = 'cat-x'; x.textContent = '🗑'; x.title = 'Supprimer cette dépense';
       x.addEventListener('click', async () => {
-        if (!confirm('Supprimer « ' + (r.label || 'cette dépense') + ' » ?')) return;
+        if (!confirm('Supprimer « ' + tidy(r.label || 'cette dépense') + ' » ?')) return;
         const { error } = await supabaseClient.from('expenses').delete().eq('id', r.id);
         if (error) { console.error(error); return; }
         row.remove(); refreshLater(); empty();
       });
-      row.append(l, sel, a, x);
+      ctl.append(sel, x);
+      row.append(l, a, ctl);
       panel.appendChild(row);
       rowsEls.push({ r, row });
     });
