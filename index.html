@@ -6909,4 +6909,43 @@ function showAiActions(actions) {
   }).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
+  <script>
+// Date limite de paiement : la case de date n'apparaît que si « Créer une tâche pour la payer » est cochée
+(function () {
+  if (window.__elnDueTidy) return;
+  window.__elnDueTidy = true;
+
+  const st = document.createElement('style');
+  st.textContent = '.eln-due-hidden{display:none !important;}' +
+    'input[type=date].eln-due{display:block;margin-top:8px;max-width:100%;}';
+  document.head.appendChild(st);
+
+  function sync(label) {
+    const cb = label.querySelector('input[type=checkbox]');
+    const inp = label.nextElementSibling;
+    if (!cb || !inp || inp.type !== 'date') return;
+    inp.classList.add('eln-due');
+    inp.classList.toggle('eln-due-hidden', !cb.checked);
+  }
+
+  function scan() {
+    document.querySelectorAll('label').forEach(l => {
+      if (!/Créer une tâche pour la payer/.test(l.textContent)) return;
+      if (!l.dataset.dueTidy) {
+        l.dataset.dueTidy = '1';
+        const cb = l.querySelector('input[type=checkbox]');
+        if (cb) cb.addEventListener('change', () => sync(l));
+      }
+      sync(l);
+    });
+  }
+
+  let raf = 0;
+  new MutationObserver(() => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(scan);
+  }).observe(document.body, { childList: true, subtree: true });
+  scan();
+})();
+</script>
 </body></html>
