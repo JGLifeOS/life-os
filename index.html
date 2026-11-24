@@ -7328,4 +7328,96 @@ function showAiActions(actions) {
   });
 })();
 </script>
+                                                                 <script>
+// Bilan du mois : touche une catégorie pour voir toutes ses dépenses
+(function () {
+  const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+  const pad = n => String(n).padStart(2, '0');
+  const DATE_IN_TITLE = /\s*\b\d{1,2}[\/.\-]\d{1,2}([\/.\-]\d{2,4})?\b/g;
+  const eur = n => Number(n).toFixed(2).replace('.', ',') + ' €';
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #recapSection .cat-line{cursor:pointer;-webkit-tap-highlight-color:transparent}
+    #recapSection .cat-line > span:first-child::after{content:' ›';opacity:.5;display:inline-block;transition:transform .15s}
+    #recapSection .cat-line.open > span:first-child::after{transform:rotate(90deg)}
+    #recapSection .cat-detail{margin:6px 0 4px;padding:4px 10px;background:#0b1224;border-radius:12px}
+    #recapSection .cat-item{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid #1f2945;font-size:14px}
+    #recapSection .cat-item:last-child{border-bottom:0}
+    #recapSection .cat-item span:first-child{flex:1;min-width:0}
+    #recapSection .cat-item small{display:block;color:#8390b3;font-size:11px}
+    #recapSection .cat-item b{white-space:nowrap}
+  `;
+  document.head.appendChild(st);
+
+  function currentMonth(card) {
+    const t = (card.querySelector('strong')?.textContent || '').toLowerCase().trim();
+    const m = t.match(/([a-zéûè]+)\s+(\d{4})/);
+    if (!m) return null;
+    const i = MONTHS.indexOf(m[1]);
+    return i < 0 ? null : { y: Number(m[2]), m: i + 1 };
+  }
+
+  async function showDetail(card, line, cat) {
+    const track = line.nextElementSibling;
+    const existing = track && track.nextElementSibling && track.nextElementSibling.classList.contains('cat-detail')
+      ? track.nextElementSibling : null;
+    if (existing) { existing.remove(); line.classList.remove('open'); return; }
+
+    const mo = currentMonth(card);
+    if (!mo) return;
+    const panel = document.createElement('div');
+    panel.className = 'cat-detail';
+    panel.textContent = 'Chargement…';
+    track.after(panel);
+    line.classList.add('open');
+
+    const nextY = mo.m === 12 ? mo.y + 1 : mo.y, nextM = mo.m === 12 ? 1 : mo.m + 1;
+    let q = supabaseClient.from('expenses').select('id, label, amount, spent_on, space_id')
+      .eq('category', cat)
+      .gte('spent_on', mo.y + '-' + pad(mo.m) + '-01')
+      .lt('spent_on', nextY + '-' + pad(nextM) + '-01');
+    const scope = card.querySelector('select')?.value || '';
+    if (scope === 'perso') q = q.is('space_id', null);
+    else if (scope) q = q.eq('space_id', scope);
+    const { data, error } = await q.order('spent_on', { ascending: false }).limit(500);
+    panel.textContent = '';
+    if (error) { console.error(error); panel.textContent = 'Impossible de charger.'; return; }
+    if (!data || !data.length) { panel.textContent = 'Aucune dépense.'; return; }
+    data.forEach(r => {
+      const row = document.createElement('div'); row.className = 'cat-item';
+      const l = document.createElement('span');
+      l.textContent = (String(r.label || 'Sans titre').replace(DATE_IN_TITLE, '').trim() || r.label);
+      const sm = document.createElement('small');
+      sm.textContent = parseInt(String(r.spent_on).slice(8, 10), 10) + ' ' + MOIS[parseInt(String(r.spent_on).slice(5, 7), 10) - 1];
+      l.appendChild(sm);
+      const a = document.createElement('b'); a.textContent = eur(r.amount);
+      row.append(l, a);
+      panel.appendChild(row);
+    });
+  }
+
+  function run() {
+    const card = document.getElementById('recapSection');
+    if (!card) return;
+    card.querySelectorAll('div:not([data-cat])').forEach(d => {
+      if (d.children.length !== 2 || d.children[0].tagName !== 'SPAN' || d.children[1].tagName !== 'SPAN') return;
+      if (!/€\s*·\s*\d+\s*%/.test(d.children[1].textContent)) return;
+      d.dataset.cat = '1';
+      d.classList.add('cat-line');
+      const cat = d.children[0].textContent.replace(/\s*›\s*$/, '').trim();
+      d.addEventListener('click', () => showDetail(card, d, cat));
+    });
+  }
+
+  run();
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; run(); });
+  }).observe(document.body, { childList: true, subtree: true });
+})();
+</script>
 </body></html>
