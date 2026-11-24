@@ -6607,4 +6607,120 @@ function showAiActions(actions) {
   }).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
+  <script>
+// Bulle de l'assistant : un bouton ✦ visible sur toutes les pages qui ouvre l'assistant par-dessus
+(function () {
+  const app = document.getElementById('appContent');
+  const card = document.getElementById('life-ai');
+  if (!app || !card || document.getElementById('elnBubble')) return;
+
+  const style = document.createElement('style');
+  style.textContent = `
+    #elnBubble{position:fixed;right:16px;bottom:calc(88px + env(safe-area-inset-bottom));z-index:55;width:56px;height:56px;
+      border-radius:50%;border:0;padding:0;font-size:26px;color:#fff;cursor:pointer;
+      background:linear-gradient(135deg,#7659ed,#a58bff);box-shadow:0 8px 22px rgba(80,50,200,.45)}
+    #elnBubble:active{transform:scale(.94)}
+    #elnBackdrop{position:fixed;inset:0;background:rgba(5,8,20,.6);z-index:58;display:none}
+    body.eln-sheet-open #elnBackdrop{display:block}
+    body.eln-sheet-open #elnBubble{display:none !important}
+    #life-ai.eln-sheet{position:fixed;left:10px;right:10px;top:calc(env(safe-area-inset-top) + 10px);z-index:60;margin:0;
+      max-height:62vh;overflow-y:auto;-webkit-overflow-scrolling:touch;box-shadow:0 20px 50px rgba(0,0,0,.55)}
+    #life-ai.eln-sheet.eln-hidden{display:block !important}
+    #life-ai .eln-close{display:none}
+    #life-ai.eln-sheet .eln-close{display:block;position:absolute;right:12px;top:12px;z-index:2;background:#2a3454;color:#fff;
+      border:0;border-radius:50%;width:34px;height:34px;padding:0;font-size:16px}
+    @media (min-width:700px){#life-ai.eln-sheet{left:50%;right:auto;width:620px;transform:translateX(-50%)}}
+  `;
+  document.head.appendChild(style);
+
+  const backdrop = document.createElement('div');
+  backdrop.id = 'elnBackdrop';
+  const bubble = document.createElement('button');
+  bubble.id = 'elnBubble';
+  bubble.type = 'button';
+  bubble.textContent = '✦';
+  bubble.setAttribute('aria-label', 'Ouvrir l’assistant ELNOVIA');
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'eln-close';
+  close.textContent = '✕';
+  close.setAttribute('aria-label', 'Fermer l’assistant');
+  card.style.position = card.style.position || '';
+  card.prepend(close);
+  app.append(backdrop, bubble);
+
+  const activeTab = () => (document.querySelector('#elnTabs button.on') || {}).dataset?.tab || 'home';
+
+  function open() {
+    card.classList.add('eln-sheet');
+    card.classList.remove('eln-hidden');
+    document.body.classList.add('eln-sheet-open');
+    card.scrollTop = 0;
+    const q = document.getElementById('aiQuestion');
+    if (q) setTimeout(() => { try { q.focus(); } catch (e) { /* ignoré */ } }, 150);
+  }
+
+  function shut() {
+    card.classList.remove('eln-sheet');
+    document.body.classList.remove('eln-sheet-open');
+    card.classList.toggle('eln-hidden', activeTab() !== 'assistant');
+  }
+
+  bubble.addEventListener('click', open);
+  close.addEventListener('click', shut);
+  backdrop.addEventListener('click', shut);
+
+  // Tant que l'assistant est ouvert, l'onglet actif ne doit pas le recacher
+  new MutationObserver(() => {
+    if (card.classList.contains('eln-sheet') && card.classList.contains('eln-hidden')) {
+      card.classList.remove('eln-hidden');
+    }
+  }).observe(card, { attributes: true, attributeFilter: ['class'] });
+
+  // La bulle est inutile sur l'onglet Assistant lui-même
+  setInterval(() => { bubble.style.display = activeTab() === 'assistant' ? 'none' : ''; }, 300);
+  // Changer d'onglet ferme l'assistant superposé
+  document.addEventListener('click', ev => {
+    if (ev.target.closest && ev.target.closest('#elnTabs') && card.classList.contains('eln-sheet')) shut();
+  }, true);
+})();
+</script>
+<script>
+// Assistant v2 : fenêtre plus sobre (moins de texte, réponse dans une bulle)
+(function () {
+  const style = document.createElement('style');
+  style.textContent = `
+    section.card.gradient{display:none !important}
+    #life-ai{padding:16px}
+    #life-ai > h2{font-size:16px;margin:0 0 12px;padding-right:44px}
+    #life-ai > p.muted:not(#aiResponse){display:none}
+    #life-ai #aiQuestion{margin:0 0 10px;width:100%;box-sizing:border-box}
+    #life-ai button:not(.eln-close){padding:11px 18px}
+    #life-ai label{display:block;margin-top:10px;font-size:13px;color:#a9b3cf}
+    #aiResponse:empty{display:none}
+    #aiResponse:not(:empty){background:#0b1224;border:1px solid #1f2945;border-radius:14px;padding:12px 14px;
+      margin:12px 0 0;font-size:15px;line-height:1.45;white-space:pre-wrap}
+    #aiActions:empty{display:none}
+    #aiActions{margin-top:10px}
+  `;
+  document.head.appendChild(style);
+
+  // Envoyer et Parler sur la même ligne
+  function layout() {
+    const card = document.getElementById('life-ai');
+    if (!card || card.dataset.row) return;
+    const send = card.querySelector(':scope > button[onclick*="askLifeAI"]');
+    const mic = [...card.querySelectorAll('button')].find(b => /Parler|Arrêter/.test(b.textContent));
+    if (!send || !mic || !mic.parentElement || mic.parentElement === card) return;
+    card.dataset.row = '1';
+    const bar = mic.parentElement;
+    bar.style.cssText += ';display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:2px';
+    bar.insertBefore(send, bar.firstChild);
+    send.style.margin = '0';
+    mic.style.margin = '0';
+  }
+  layout();
+  new MutationObserver(layout).observe(document.body, { childList: true, subtree: true });
+})();
+</script>
 </body></html>
