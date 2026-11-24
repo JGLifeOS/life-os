@@ -6737,4 +6737,176 @@ function showAiActions(actions) {
   document.head.appendChild(style);
 })();
 </script>
+  <script>
+// Fin de validité v1 : l'IA lit la date de fin (assurance, carte, garantie…) et le rangement crée une tâche « Renouveler »
+// avec un rappel 30 jours avant.
+(function () {
+  if (window.__elnoviaExpiry) return;
+  window.__elnoviaExpiry = true;
+
+  const okDay = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(new Date(v + 'T12:00:00'));
+  const key = t => String(t || '').trim().toLowerCase().slice(0, 120);
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+
+  const found = {};            // titre -> date de fin lue par l'IA
+
+  // ---------- 1) Récupérer la date de fin lue par l'IA ----------
+  try {
+    const own = Object.getOwnPropertyDescriptor(supabaseClient, 'functions');
+    const proto = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(supabaseClient), 'functions');
+    const desc = own || proto;
+    const wrap = f => {
+      if (!f || f.__elnExpiry) return f;
+      const original = f.invoke.bind(f);
+      f.invoke = async function (name, options) {
+        const result = await original(name, options);
+        try {
+          const scan = name === 'scan-document' && result && result.data && result.data.scan;
+          if (scan && okDay(scan.expires_on)) found[key(scan.title)] = scan.expires_on;
+        } catch (e) { /* ignoré */ }
+        return result;
+      };
+      f.__elnExpiry = true;
+      return f;
+    };
+    if (desc && desc.get) {
+      Object.defineProperty(supabaseClient, 'functions', {
+        configurable: true,
+        get() { return wrap(desc.get.call(this)); }
+      });
+    } else if (supabaseClient.functions) {
+      wrap(supabaseClient.functions);
+    }
+  } catch (e) {
+    console.error('Fin de validité : écoute du scan impossible', e);
+  }
+
+  // ---------- 2) Brancher la lecture de « À trier » et la création du document ----------
+  const previousFrom = supabaseClient.from.bind(supabaseClient);
+
+  function toast(text) {
+    const t = document.createElement('div');
+    t.textContent = text;
+    t.style.cssText = 'position:fixed;left:16px;right:16px;bottom:calc(96px + env(safe-area-inset-bottom));z-index:70;' +
+      'background:#1f2945;color:#fff;border:1px solid #35415e;border-radius:14px;padding:12px 14px;font-size:14px;text-align:center';
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 5000);
+  }
+
+  async function createRenewal(doc) {
+    const input = document.querySelector('[data-exp] input[type=date]');
+    const day = input && input.value;
+    if (!okDay(day) || !doc || !doc.title) return;
+    input.value = '';
+
+    const due = new Date(day + 'T12:00:00');
+    let remind = new Date(day + 'T09:00:00');
+    remind.setDate(remind.getDate() - 30);
+    const now = new Date();
+    if (remind <= now) {                      // moins de 30 jours : on prévient demain matin
+      remind = new Date(); remind.setDate(remind.getDate() + 1); remind.setHours(9, 0, 0, 0);
+    }
+    const row = {
+      user_id: doc.user_id,
+      title: ('Renouveler : ' + doc.title).slice(0, 120),
+      status: 'todo',
+      category: 'Autre',
+      priority: 'medium',
+      due_date: day + 'T12:00:00',
+      space_id: doc.space_id || null
+    };
+    if (remind < due) row.remind_at = remind.toISOString();
+
+    const { error } = await supabaseClient.from('tasks').insert(row);
+    if (error) { console.error(error); return; }
+    toast('🔔 Rappel créé : ' + row.title + (row.remind_at ? ' (prévenu 30 jours avant)' : ''));
+    if (typeof window.loadTasks === 'function') window.loadTasks();
+  }
+
+  supabaseClient.from = function (table) {
+    const query = previousFrom(table);
+
+    if (table === 'inbox_items') {
+      const originalSelect = query.select.bind(query);
+      query.select = function () {
+        const builder = originalSelect.apply(null, arguments);
+        const originalThen = builder.then.bind(builder);
+        builder.then = function (ok, ko) {
+          return originalThen(result => {
+            try {
+              (result && result.data || []).forEach(r => {
+                if (r && r.scan && okDay(r.scan.expires_on)) found[key(r.scan.title)] = r.scan.expires_on;
+              });
+            } catch (e) { /* ignoré */ }
+            return ok ? ok(result) : result;
+          }, ko);
+        };
+        return builder;
+      };
+    }
+
+    if (table === 'documents') {
+      const originalInsert = query.insert.bind(query);
+      query.insert = function (values, options) {
+        const builder = originalInsert(values, options);
+        const originalThen = builder.then.bind(builder);
+        builder.then = function (ok, ko) {
+          return originalThen(async result => {
+            try {
+              if (result && !result.error && values && !Array.isArray(values) && values.file_path) await createRenewal(values);
+            } catch (e) { console.error(e); }
+            return ok ? ok(result) : result;
+          }, ko);
+        };
+        return builder;
+      };
+    }
+    return query;
+  };
+
+  // ---------- 3) Champ « fin de validité » dans les formulaires de rangement ----------
+  function addField(saveBtn) {
+    const host = saveBtn.parentElement;
+    if (!host || host.querySelector('[data-exp]')) return;
+
+    const titleInput = host.querySelector('input[type=text]');
+    const wrap = document.createElement('div');
+    wrap.dataset.exp = '1';
+    wrap.style.cssText = 'margin-top:14px';
+
+    const label = document.createElement('label');
+    label.style.cssText = 'display:block';
+    label.append(document.createTextNode('🔔 Fin de validité (facultatif)'));
+    const input = document.createElement('input');
+    input.type = 'date';
+    input.style.marginTop = '6px';
+    label.appendChild(input);
+
+    const hint = document.createElement('small');
+    hint.className = 'muted';
+    hint.style.cssText = 'display:block;margin-top:4px';
+    hint.textContent = 'Contrat, assurance, carte, garantie… Je te préviens 30 jours avant.';
+
+    wrap.append(label, hint);
+    host.insertBefore(wrap, saveBtn);
+
+    const guess = titleInput ? found[key(titleInput.value)] : '';
+    if (guess) input.value = guess;
+  }
+
+  function scan() {
+    document.querySelectorAll('button').forEach(b => {
+      if (/Ranger le document/.test(b.textContent)) addField(b);
+    });
+  }
+  scan();
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; scan(); });
+  }).observe(document.body, { childList: true, subtree: true });
+})();
+</script>
 </body></html>
