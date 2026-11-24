@@ -7921,4 +7921,266 @@ function showAiActions(actions) {
   try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 500)); } catch (e) { /* ignoré */ }
 })();
 </script>
+  <script>
+// Page de connexion v2 : logo, carte, champs soignés, œil pour voir le mot de passe, mot de passe oublié
+(function () {
+  const screen = document.getElementById('loginScreen');
+  if (!screen || screen.dataset.v2) return;
+  screen.dataset.v2 = '1';
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #loginScreen{padding:0 !important;text-align:left !important}
+    #loginScreen .lg-wrap{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      padding:32px 22px calc(32px + env(safe-area-inset-bottom));
+      background:radial-gradient(120% 60% at 50% -10%,rgba(118,89,237,.38),transparent 60%),radial-gradient(80% 50% at 100% 100%,rgba(23,59,140,.35),transparent 60%),#090d1b}
+    #loginScreen .lg-brand{text-align:center;margin-bottom:26px}
+    #loginScreen .lg-mark{width:76px;height:76px;margin:0 auto 14px;border-radius:24px;display:flex;align-items:center;justify-content:center;font-size:38px;color:#fff;
+      background:linear-gradient(145deg,#7659ed,#a58bff);box-shadow:0 12px 36px rgba(118,89,237,.55),inset 0 1px 0 rgba(255,255,255,.35)}
+    #loginScreen .lg-name{font-size:30px;font-weight:800;letter-spacing:6px;margin:0}
+    #loginScreen .lg-tag{color:#a9b3cf;font-size:14px;margin:6px 0 0;letter-spacing:.5px}
+    #loginScreen .lg-card{width:100%;max-width:400px;background:rgba(21,29,50,.82);border:1px solid #2b3655;border-radius:24px;padding:24px 20px;
+      -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:0 20px 50px rgba(0,0,0,.4)}
+    #loginScreen .lg-title{font-size:20px;font-weight:700;margin:0 0 4px}
+    #loginScreen .lg-sub{color:#a9b3cf;font-size:14px;margin:0 0 18px}
+    #loginScreen form{margin:0}
+    #loginScreen label.lg-f{display:block;font-size:12.5px;font-weight:600;color:#a9b3cf;margin:12px 0 6px;letter-spacing:.3px}
+    #loginScreen input[type=email],#loginScreen input[type=password],#loginScreen input[type=text]{
+      width:100%;height:52px;padding:0 16px;border-radius:14px;background:#0b1224;color:#f7f8ff;border:1px solid #35415e;font-size:16px;margin:0;outline:none;
+      -webkit-appearance:none;appearance:none}
+    #loginScreen input:focus{border-color:#8f78ff;box-shadow:0 0 0 3px rgba(143,120,255,.25)}
+    #loginScreen .lg-pw{position:relative}
+    #loginScreen .lg-pw input{padding-right:52px}
+    #loginScreen .lg-eye{position:absolute;right:4px;top:4px;width:44px;height:44px;border-radius:12px;background:transparent;color:#a9b3cf;padding:0;font-size:18px}
+    #loginScreen button[type=submit]{width:100%;height:54px;margin-top:20px;border-radius:14px;font-size:17px;
+      background:linear-gradient(135deg,#7659ed,#9a7cff);box-shadow:0 10px 24px rgba(118,89,237,.45)}
+    #loginScreen button[type=submit]:active{transform:translateY(1px)}
+    #loginScreen button:disabled{opacity:.6}
+    #loginScreen #loginMessage{min-height:20px;margin:14px 0 0;text-align:center;font-size:14px;color:#c4b5ff}
+    #loginScreen .lg-forgot{display:block;margin:10px auto 0;background:transparent;color:#a9b3cf;font-weight:600;font-size:14px;padding:8px 10px;text-decoration:underline}
+    #loginScreen .lg-foot{margin-top:22px;color:#6f7a99;font-size:12px;text-align:center}
+  `;
+  document.head.appendChild(st);
+
+  const form = document.getElementById('loginForm');
+  const email = document.getElementById('loginEmail');
+  const pass = document.getElementById('loginPassword');
+  const msg = document.getElementById('loginMessage');
+  const oldTitle = screen.querySelector('h2');
+  if (!form || !email || !pass) return;
+
+  // Attributs qui aident l'iPhone à proposer ton mot de passe enregistré (avec Face ID)
+  email.setAttribute('autocomplete', 'username');
+  email.setAttribute('autocapitalize', 'off');
+  email.setAttribute('autocorrect', 'off');
+  email.setAttribute('inputmode', 'email');
+  email.placeholder = 'toi@exemple.fr';
+  pass.setAttribute('autocomplete', 'current-password');
+  pass.placeholder = '••••••••';
+
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text) n.textContent = text; return n; };
+
+  const wrap = el('div', 'lg-wrap');
+  const brand = el('div', 'lg-brand');
+  brand.append(el('div', 'lg-mark', '✦'), el('h1', 'lg-name', 'ELNOVIA'), el('p', 'lg-tag', 'Your life. Your way.'));
+  const card = el('div', 'lg-card');
+  card.append(el('h2', 'lg-title', 'Bon retour'), el('p', 'lg-sub', 'Connecte-toi pour retrouver ton espace.'));
+
+  // étiquettes + champs
+  const lblE = el('label', 'lg-f', 'Adresse e-mail'); lblE.htmlFor = 'loginEmail';
+  const lblP = el('label', 'lg-f', 'Mot de passe'); lblP.htmlFor = 'loginPassword';
+  const pwBox = el('div', 'lg-pw');
+  const eye = el('button', 'lg-eye', '👁'); eye.type = 'button'; eye.setAttribute('aria-label', 'Afficher le mot de passe');
+  eye.addEventListener('click', () => {
+    const show = pass.type === 'password';
+    pass.type = show ? 'text' : 'password';
+    eye.textContent = show ? '🙈' : '👁';
+  });
+  const submit = form.querySelector('button[type=submit]');
+  form.insertBefore(lblE, email);
+  form.insertBefore(lblP, pass);
+  pass.parentNode.insertBefore(pwBox, pass);
+  pwBox.append(pass, eye);
+  if (submit) submit.textContent = 'Se connecter';
+
+  const forgot = el('button', 'lg-forgot', 'Mot de passe oublié ?'); forgot.type = 'button';
+  forgot.addEventListener('click', async () => {
+    const mail = email.value.trim();
+    if (!mail) { msg.textContent = 'Écris d’abord ton adresse e-mail ci-dessus.'; email.focus(); return; }
+    msg.textContent = 'Envoi du lien…';
+    try {
+      const { error } = await supabaseClient.auth.resetPasswordForEmail(mail, { redirectTo: location.origin + location.pathname });
+      msg.textContent = error ? 'Impossible d’envoyer le lien : ' + error.message : '📧 Lien envoyé. Regarde ta boîte mail.';
+    } catch (e) { msg.textContent = 'Impossible d’envoyer le lien.'; }
+  });
+
+  card.append(form, msg, forgot);
+  wrap.append(brand, card, el('p', 'lg-foot', 'ELNOVIA · Version 1.0'));
+
+  if (oldTitle) oldTitle.style.display = 'none';
+  [...screen.children].forEach(c => { if (c !== form && c !== msg && c !== oldTitle) c.remove(); });
+  screen.appendChild(wrap);
+})();
+</script>
+  <script>
+// Verrouillage Face ID : à l'ouverture de l'appli, il faut se déverrouiller avec Face ID (ou Touch ID / code de l'iPhone)
+(function () {
+  if (window.__elnFaceId) return;
+  window.__elnFaceId = true;
+
+  const KEY = 'elnoviaFaceId';           // identifiant de la clé Face ID de cet appareil
+  const LOCK_AFTER_MS = 30 * 1000;       // reverrouille après 30 secondes en arrière-plan
+  const supported = !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
+
+  const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const unb64 = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+  const get = () => { try { return localStorage.getItem(KEY); } catch (e) { return null; } };
+  const set = v => { try { v ? localStorage.setItem(KEY, v) : localStorage.removeItem(KEY); } catch (e) { /* ignoré */ } };
+
+  async function register(label) {
+    const cred = await navigator.credentials.create({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rp: { name: 'ELNOVIA', id: location.hostname },
+        user: { id: crypto.getRandomValues(new Uint8Array(16)), name: label || 'elnovia', displayName: label || 'ELNOVIA' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
+        timeout: 60000, attestation: 'none'
+      }
+    });
+    set(b64(cred.rawId));
+  }
+
+  async function verify() {
+    const id = get();
+    if (!id) return true;
+    const res = await navigator.credentials.get({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rpId: location.hostname,
+        allowCredentials: [{ type: 'public-key', id: unb64(id) }],
+        userVerification: 'required', timeout: 60000
+      }
+    });
+    return !!res;
+  }
+
+  // ---------- écran de verrouillage ----------
+  const st = document.createElement('style');
+  st.textContent = `
+    #elnLock{position:fixed;inset:0;z-index:99999;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;
+      background:radial-gradient(120% 60% at 50% -10%,rgba(118,89,237,.4),transparent 60%),#090d1b;color:#f7f8ff}
+    #elnLock.on{display:flex}
+    #elnLock .mark{width:84px;height:84px;border-radius:26px;display:flex;align-items:center;justify-content:center;font-size:42px;color:#fff;margin-bottom:18px;
+      background:linear-gradient(145deg,#7659ed,#a58bff);box-shadow:0 12px 36px rgba(118,89,237,.55)}
+    #elnLock h1{font-size:24px;letter-spacing:5px;margin:0 0 6px}
+    #elnLock p{color:#a9b3cf;margin:0 0 26px;font-size:15px}
+    #elnLock button.go{background:linear-gradient(135deg,#7659ed,#9a7cff);color:#fff;border:0;border-radius:16px;padding:16px 26px;font-size:17px;font-weight:700;box-shadow:0 10px 24px rgba(118,89,237,.45)}
+    #elnLock button.out{margin-top:18px;background:transparent;color:#a9b3cf;border:0;font-size:14px;text-decoration:underline}
+    #elnLock .err{min-height:20px;color:#f9a4b3;font-size:14px;margin-top:14px}
+  `;
+  document.head.appendChild(st);
+
+  const lock = document.createElement('div');
+  lock.id = 'elnLock';
+  lock.innerHTML = '<div class="mark">✦</div><h1>ELNOVIA</h1><p>Verrouillé</p>';
+  const go = document.createElement('button'); go.className = 'go'; go.type = 'button'; go.textContent = '🔓 Déverrouiller avec Face ID';
+  const err = document.createElement('div'); err.className = 'err';
+  const out = document.createElement('button'); out.className = 'out'; out.type = 'button'; out.textContent = 'Se déconnecter';
+  lock.append(go, err, out);
+  document.body.appendChild(lock);
+
+  let locked = false, trying = false;
+  const show = () => { locked = true; lock.classList.add('on'); err.textContent = ''; };
+  const hide = () => { locked = false; lock.classList.remove('on'); };
+
+  async function unlock() {
+    if (trying) return;
+    trying = true; err.textContent = '';
+    try { if (await verify()) hide(); }
+    catch (e) { err.textContent = (e && e.name === 'NotAllowedError') ? 'Face ID annulé ou refusé. Réessaie.' : 'Face ID indisponible.'; }
+    finally { trying = false; }
+  }
+  go.addEventListener('click', unlock);
+  out.addEventListener('click', async () => {
+    try { await supabaseClient.auth.signOut(); } catch (e) { /* ignoré */ }
+    hide(); location.reload();
+  });
+
+  async function hasSession() {
+    try { const { data: { session } } = await supabaseClient.auth.getSession(); return !!session; } catch (e) { return false; }
+  }
+
+  async function lockIfNeeded(auto) {
+    if (!get() || locked) return;
+    if (!(await hasSession())) return;           // pas connecté : la page de connexion s'affiche normalement
+    show();
+    if (auto) unlock();
+  }
+
+  // Au démarrage : on cache tout tout de suite si le verrou est actif, puis on vérifie la connexion
+  if (get()) {
+    show();
+    hasSession().then(ok => { if (!ok) hide(); else unlock(); });
+  }
+
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) hiddenAt = Date.now();
+    else if (hiddenAt && Date.now() - hiddenAt > LOCK_AFTER_MS) lockIfNeeded(true);
+  });
+
+  // ---------- carte de réglage (onglet Plus) ----------
+  const anchor = document.getElementById('backupSection') || document.getElementById('pushSection') ||
+    [...document.querySelectorAll('section.card')].pop();
+  if (!anchor) return;
+  const card = document.createElement('section');
+  card.className = 'card'; card.id = 'faceIdSection';
+  const h = document.createElement('h2'); h.textContent = '🔒 Verrouillage Face ID';
+  const info = document.createElement('p'); info.className = 'muted';
+  const btn = document.createElement('button'); btn.type = 'button';
+  const msg = document.createElement('p'); msg.className = 'muted';
+  card.append(h, info, btn, msg);
+  anchor.after(card);
+
+  async function refresh() {
+    let platform = false;
+    if (supported && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+      try { platform = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(); } catch (e) { /* ignoré */ }
+    }
+    if (!supported || !platform) {
+      info.textContent = 'Face ID n’est pas disponible ici. Ouvre ELNOVIA depuis l’icône de ton écran d’accueil sur un iPhone avec Face ID ou Touch ID.';
+      btn.style.display = 'none';
+      return;
+    }
+    btn.style.display = '';
+    if (get()) {
+      info.textContent = '✅ Actif sur cet appareil : ELNOVIA demande Face ID à l’ouverture et après 30 secondes en arrière-plan.';
+      btn.textContent = 'Désactiver Face ID';
+    } else {
+      info.textContent = 'Protège ELNOVIA : à l’ouverture, ton visage (ou ton code) est demandé avant d’afficher tes données. Réglage propre à cet appareil.';
+      btn.textContent = '🔒 Activer Face ID';
+    }
+  }
+  btn.addEventListener('click', async () => {
+    msg.textContent = '';
+    try {
+      if (get()) {
+        if (!(await verify())) return;       // il faut se reconnaître pour désactiver
+        set(null);
+      } else {
+        let mail = '';
+        try { const { data: { user } } = await supabaseClient.auth.getUser(); mail = (user && user.email) || ''; } catch (e) { /* ignoré */ }
+        await register(mail);
+        msg.textContent = '✅ Face ID activé.';
+      }
+    } catch (e) {
+      console.error(e);
+      msg.textContent = (e && e.name === 'NotAllowedError') ? 'Face ID annulé ou refusé.' : 'Impossible d’activer Face ID sur cet appareil.';
+    }
+    refresh();
+  });
+  refresh();
+})();
+</script>
  </body></html>
