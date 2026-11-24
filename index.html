@@ -7505,4 +7505,32 @@ function showAiActions(actions) {
   });
 })();
 </script>
+  <script>
+// Nouvelles catégories de dépenses : Impôts, Banque, Espèces
+(function () {
+  if (window.__elnCats) return;
+  window.__elnCats = true;
+  const NEW = ['Impôts', 'Banque', 'Espèces'];
+
+  function extend(sel) {
+    const vals = [...sel.options].map(o => o.value);
+    if (!vals.includes('Courses') || !vals.includes('Abonnements') || vals.includes(NEW[0])) return;
+    const before = [...sel.options].find(o => o.value === 'Autre') || null;
+    NEW.forEach(n => {
+      const o = document.createElement('option');
+      o.value = o.textContent = n;
+      sel.insertBefore(o, before);
+    });
+  }
+  const scan = () => document.querySelectorAll('select').forEach(extend);
+
+  scan();
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; scan(); });
+  }).observe(document.body, { childList: true, subtree: true });
+})();
+</script>
  </body></html>
