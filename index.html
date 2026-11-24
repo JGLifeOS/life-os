@@ -7580,4 +7580,55 @@ function showAiActions(actions) {
   }).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
+  <script>
+// Finances : « Dernières dépenses » dans une liste déroulante (fermée par défaut)
+(function () {
+  if (window.__elnFinFold) return;
+  window.__elnFinFold = true;
+
+  const st = document.createElement('style');
+  st.textContent = `
+    details#finListFold{margin:12px 0 4px}
+    details#finListFold > summary{cursor:pointer;font-weight:600;color:#c4b5ff;padding:8px 0;list-style:none}
+    details#finListFold > summary::-webkit-details-marker{display:none}
+    details#finListFold > summary::after{content:' ▾';opacity:.7}
+    details#finListFold[open] > summary::after{content:' ▴'}
+  `;
+  document.head.appendChild(st);
+
+  function run() {
+    const card = [...document.querySelectorAll('section.card')]
+      .find(s => (s.querySelector('h2')?.textContent || '').includes('Mes finances'));
+    if (!card) return;
+
+    let fold = document.getElementById('finListFold');
+    if (!fold) {
+      // la boîte qui contient les lignes de dépenses
+      const row = card.querySelector('.task');
+      const box = row && row.parentElement;
+      if (!box || box === card) return;
+      fold = document.createElement('details');
+      fold.id = 'finListFold';
+      const sum = document.createElement('summary');
+      fold.appendChild(sum);
+      box.parentNode.insertBefore(fold, box);
+      fold.appendChild(box);
+    }
+    const box = fold.querySelector(':scope > div');
+    const n = box ? box.querySelectorAll('.task').length : 0;
+    const sum = fold.querySelector('summary');
+    const label = '🧾 Dernières dépenses' + (n ? ' (' + n + ')' : '');
+    if (sum.dataset.l !== label) { sum.dataset.l = label; sum.firstChild ? (sum.firstChild.textContent = label) : sum.append(label); }
+    fold.style.display = n ? '' : 'none';
+  }
+
+  run();
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; run(); });
+  }).observe(document.body, { childList: true, subtree: true });
+})();
+</script>
  </body></html>
