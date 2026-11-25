@@ -8798,4 +8798,207 @@ function showAiActions(actions) {
   });
 })();
 </script>
+  <script>
+// Foyer v1 : faire le point d'un espace partagé (qui a payé quoi, tâches, courses) et monter un projet commun
+(function () {
+  if (document.getElementById('homeCard')) return;
+  const anchor = document.getElementById('lifeScanCard') || document.getElementById('simCard') || document.getElementById('memoryCard') ||
+    document.getElementById('lifeReviewCard') ||
+    [...document.querySelectorAll('section.card')].find(s => /elnovia ai/i.test(s.querySelector('h2')?.textContent || '')) ||
+    [...document.querySelectorAll('section.card')].pop();
+  if (!anchor) return;
+
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const eur = n => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' €';
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #homeCard .hm-intro{color:#a9b3cf;font-size:13px;margin:0 0 10px}
+    #homeCard select,#homeCard input,#homeCard textarea{display:block;width:100%;box-sizing:border-box;margin:6px 0 8px}
+    #homeCard textarea{min-height:76px;resize:vertical;font:inherit}
+    #homeCard .hm-go{width:100%}
+    #homeCard details{margin-top:12px;background:#0f1830;border:1px solid #243052;border-radius:12px;padding:8px 12px}
+    #homeCard summary{cursor:pointer;font-size:14px;font-weight:600}
+    #homeCard h3{font-size:14px;margin:14px 0 6px;color:#dfe5fa}
+    #homeCard .hm-sum{font-size:15px;line-height:1.5;margin:12px 0 6px}
+    #homeCard .hm-row{display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-top:1px solid #1f2945;font-size:14px}
+    #homeCard .hm-row small{display:block;color:#8390b3;font-size:12px}
+    #homeCard .hm-pos{color:#5fd39a}.hm-neg{color:#ff8f8c}
+    #homeCard .hm-pay{background:#12203f;border:1px solid #2d4175;border-radius:12px;padding:10px;font-size:14px;margin:8px 0}
+    #homeCard .hm-chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+    #homeCard .hm-chip{background:#1b2540;border-radius:999px;padding:4px 10px;font-size:12px;color:#c9d2ee}
+    #homeCard .hm-pt{padding:8px 0;border-top:1px solid #1f2945;font-size:14px}
+    #homeCard .hm-pt small{display:block;color:#8390b3;margin-top:2px;font-size:13px}
+    #homeCard .hm-act{display:flex;gap:10px;align-items:center;padding:9px 0;border-top:1px solid #1f2945}
+    #homeCard .hm-act div{flex:1;min-width:0;font-size:14px}
+    #homeCard .hm-act small{display:block;color:#8390b3;font-size:12px;margin-top:2px}
+    #homeCard .hm-act button{width:auto;white-space:nowrap;padding:7px 10px;font-size:13px;margin:0}
+    #homeCard .hm-warn{color:#ffcf9e;font-size:13px;margin-top:8px}
+    #homeCard .hm-small{color:#8390b3;font-size:12px;margin-top:8px}
+    #homeCard ul{margin:6px 0;padding-left:18px;font-size:13px;line-height:1.5}
+  `;
+  document.head.appendChild(st);
+
+  const card = el('section', 'card');
+  card.id = 'homeCard';
+  const h = el('h2', null, '🏠 Mon foyer');
+  const hid = el('span', null, ' elnovia ai');             // classe la carte dans l'onglet Assistant
+  hid.style.display = 'none';
+  h.appendChild(hid);
+  const intro = el('p', 'hm-intro', 'Pour un espace partagé (couple, famille, colocation) : qui a payé quoi, qui doit combien, l’état des tâches — et un plan pour vos projets communs.');
+  const sel = el('select');
+  const goBilan = el('button', 'hm-go', '⚖️ Faire le point du foyer');
+  goBilan.type = 'button';
+  const outB = el('div');
+
+  const det = el('details');
+  det.appendChild(el('summary', null, '🗺️ Monter un projet commun'));
+  const pIn = el('textarea');
+  pIn.maxLength = 500;
+  pIn.placeholder = 'Ex. : Partir une semaine en famille en Italie cet été, ou changer la cuisine…';
+  const pBud = el('input');
+  pBud.type = 'number'; pBud.inputMode = 'decimal'; pBud.min = '0'; pBud.placeholder = 'Budget en € (facultatif)';
+  const pDate = el('input');
+  pDate.type = 'date'; pDate.title = 'Date cible (facultatif)';
+  const pLab = el('div', 'hm-small', 'Date cible (facultatif) :');
+  const goProj = el('button', 'hm-go', '🗺️ Préparer le plan');
+  goProj.type = 'button';
+  const outP = el('div');
+  det.append(pIn, pBud, pLab, pDate, goProj, outP);
+  card.append(h, intro, sel, goBilan, outB, det);
+  anchor.after(card);
+
+  async function getUser() { try { const { data } = await supabaseClient.auth.getUser(); return data && data.user; } catch (e) { return null; } }
+
+  async function loadSpaces() {
+    const keep = sel.value;
+    try {
+      const { data, error } = await supabaseClient.from('spaces').select('id, name');
+      if (error) throw error;
+      sel.textContent = '';
+      (data || []).forEach(s => { const o = el('option', null, '👥 ' + s.name); o.value = s.id; sel.appendChild(o); });
+      if (keep) sel.value = keep;
+      const none = !(data || []).length;
+      goBilan.disabled = none; goProj.disabled = none;
+      if (none) { const o = el('option', null, 'Aucun espace partagé'); o.value = ''; sel.appendChild(o); }
+      intro.textContent = none
+        ? 'Crée d’abord un espace partagé (onglet Plus, carte Espaces) et invite ton foyer avec le code.'
+        : 'Pour un espace partagé (couple, famille, colocation) : qui a payé quoi, qui doit combien, l’état des tâches — et un plan pour vos projets communs.';
+    } catch (e) { /* pas connecté */ }
+  }
+
+  async function call(body) {
+    try {
+      const { data, error } = await supabaseClient.functions.invoke('life-home', { body });
+      if (error || !data || !data.result) {
+        let m = (data && data.error) || '';
+        try { if (!m && error && error.context) m = (await error.context.json()).error || ''; } catch (e) { /* ignoré */ }
+        return { error: m || 'Ça n’a pas pu se faire. Réessaie dans un instant.' };
+      }
+      return { result: data.result };
+    } catch (e) { console.error(e); return { error: 'Problème de connexion.' }; }
+  }
+
+  async function addTasks(titles, days, spaceId, btn) {
+    const user = await getUser();
+    if (!user) { btn.textContent = 'Connecte-toi'; return; }
+    btn.disabled = true;
+    const rows = titles.map((t, i) => {
+      const d = new Date(); d.setDate(d.getDate() + days[i]);
+      return { user_id: user.id, space_id: spaceId, title: t.slice(0, 120), status: 'todo', category: 'Personnel', priority: 'medium', due_date: ymd(d) + 'T12:00:00' };
+    });
+    const { error } = await supabaseClient.from('tasks').insert(rows);
+    if (error) { console.error(error); btn.disabled = false; btn.textContent = 'Erreur, réessaie'; return; }
+    btn.textContent = rows.length > 1 ? '✓ ' + rows.length + ' tâches partagées créées' : '✓ Tâche partagée ajoutée';
+    try { if (typeof window.loadTasks === 'function') window.loadTasks(); } catch (e) { /* ignoré */ }
+  }
+
+  function renderBilan(r, spaceId) {
+    outB.textContent = '';
+    outB.appendChild(el('div', 'hm-sum', r.resume));
+    outB.appendChild(el('h3', null, 'Les comptes du mois (' + eur(r.total_mois) + ' de dépenses communes)'));
+    r.comptes.forEach(c => {
+      const row = el('div', 'hm-row');
+      const left = el('div', null, c.membre);
+      left.appendChild(el('small', null, 'a payé ' + eur(c.paye) + ' · sa part : ' + eur(c.part)));
+      row.appendChild(left);
+      row.appendChild(el('b', c.solde >= 0 ? 'hm-pos' : 'hm-neg', (c.solde >= 0 ? '+' : '−') + eur(Math.abs(c.solde))));
+      outB.appendChild(row);
+    });
+    if (r.reglements.length) r.reglements.forEach(x => outB.appendChild(el('div', 'hm-pay', '🤝 ' + x.de + ' doit ' + eur(x.montant) + ' à ' + x.a)));
+    else if (r.total_mois > 0) outB.appendChild(el('div', 'hm-pay', '✅ Vous êtes à l’équilibre ce mois-ci.'));
+    const chips = el('div', 'hm-chips');
+    chips.append(el('span', 'hm-chip', '📋 ' + r.taches.ouvertes + ' tâches ouvertes'), el('span', 'hm-chip', '⚠️ ' + r.taches.en_retard + ' en retard'), el('span', 'hm-chip', '🛒 ' + r.courses + ' à acheter'));
+    outB.appendChild(chips);
+    if (r.points.length) {
+      outB.appendChild(el('h3', null, 'Ce que je constate'));
+      r.points.forEach(p => { const d = el('div', 'hm-pt', p.titre); d.appendChild(el('small', null, p.detail)); outB.appendChild(d); });
+    }
+    if (r.actions.length) {
+      outB.appendChild(el('h3', null, 'Ce que je propose'));
+      r.actions.forEach(a => {
+        const row = el('div', 'hm-act');
+        const t = el('div', null, a.titre);
+        t.appendChild(el('small', null, a.pourquoi + (a.jours ? ' · dans ' + a.jours + ' j' : ' · aujourd’hui')));
+        const b = el('button', null, '➕ Tâche partagée');
+        b.type = 'button';
+        b.addEventListener('click', () => addTasks([a.titre], [a.jours], spaceId, b));
+        row.append(t, b);
+        outB.appendChild(row);
+      });
+    }
+    outB.appendChild(el('div', 'hm-small', 'ELNOVIA ne connaît pas les prénoms : « Toi » c’est toi, les autres sont « Membre 2 », « Membre 3 »… Les dépenses sont attribuées à la personne qui les a saisies.'));
+  }
+
+  function renderProjet(r, spaceId) {
+    outP.textContent = '';
+    outP.appendChild(el('h3', null, '🗺️ ' + r.titre));
+    outP.appendChild(el('div', 'hm-sum', r.resume));
+    outP.appendChild(el('h3', null, 'Les étapes'));
+    r.etapes.forEach(e => {
+      const row = el('div', 'hm-row');
+      row.appendChild(el('div', null, e.titre));
+      row.appendChild(el('small', null, e.jours === 0 ? 'aujourd’hui' : 'dans ' + e.jours + ' j'));
+      outP.appendChild(row);
+    });
+    const b = el('button', 'hm-go', '➕ Créer ces ' + r.etapes.length + ' étapes en tâches partagées');
+    b.type = 'button';
+    b.style.marginTop = '10px';
+    b.addEventListener('click', () => addTasks(r.etapes.map(e => r.titre + ' : ' + e.titre), r.etapes.map(e => e.jours), spaceId, b));
+    outP.appendChild(b);
+    if (r.budget.length) {
+      outP.appendChild(el('h3', null, 'Budget estimé'));
+      r.budget.forEach(x => { const row = el('div', 'hm-row'); row.append(el('div', null, x.poste), el('b', null, eur(x.montant))); outP.appendChild(row); });
+      const tot = el('div', 'hm-row'); tot.append(el('b', null, 'Total estimé'), el('b', null, eur(r.total))); outP.appendChild(tot);
+      if (r.ecart != null) outP.appendChild(el('div', 'hm-pay', r.ecart >= 0 ? '✅ Dans ton budget de ' + eur(r.budget_indique) + ' (marge : ' + eur(r.ecart) + ')' : '⚠️ Dépasse ton budget de ' + eur(r.budget_indique) + ' de ' + eur(-r.ecart)));
+    }
+    if (r.attention.length) { outP.appendChild(el('h3', null, 'À ne pas oublier')); const ul = el('ul'); r.attention.forEach(t => ul.appendChild(el('li', null, t))); outP.appendChild(ul); }
+    if (r.a_preciser.length) outP.appendChild(el('div', 'hm-small', '❓ Pour affiner : ' + r.a_preciser.join(' · ')));
+    outP.appendChild(el('div', 'hm-small', 'Estimations pour t’aider à organiser, pas des devis.'));
+  }
+
+  let busy = false;
+  async function run(kind) {
+    if (busy || !sel.value) return;
+    const isB = kind === 'bilan';
+    const btn = isB ? goBilan : goProj, out = isB ? outB : outP;
+    if (!isB && pIn.value.trim().length < 8) { out.textContent = ''; out.appendChild(el('p', 'hm-warn', 'Décris ton projet en une phrase ou deux.')); return; }
+    busy = true; btn.disabled = true; const label = btn.textContent;
+    btn.textContent = '⏳ J’y réfléchis… (20 secondes)'; out.textContent = '';
+    const body = isB ? { mode: 'bilan', space_id: sel.value }
+      : { mode: 'projet', space_id: sel.value, projet: pIn.value.trim(), budget: parseFloat(String(pBud.value).replace(',', '.')) || null, date_cible: pDate.value || null };
+    const r = await call(body);
+    if (r.error) out.appendChild(el('p', 'hm-warn', '⚠️ ' + r.error));
+    else if (isB) renderBilan(r.result, sel.value); else renderProjet(r.result, sel.value);
+    btn.disabled = false; btn.textContent = label; busy = false;
+  }
+  goBilan.addEventListener('click', () => run('bilan'));
+  goProj.addEventListener('click', () => run('projet'));
+
+  loadSpaces();
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(loadSpaces, 600)); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
