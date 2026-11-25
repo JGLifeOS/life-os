@@ -8576,4 +8576,226 @@ function showAiActions(actions) {
   addReset('simCard', '🔮 Simuler');
 })();
 </script>
+  <script>
+// Life Scan v1 : photo du frigo (recettes + courses) ou d'un appareil en panne (diagnostic + tâche)
+(function () {
+  if (document.getElementById('lifeScanCard')) return;
+  const anchor = document.getElementById('simCard') || document.getElementById('memoryCard') || document.getElementById('lifeReviewCard') ||
+    [...document.querySelectorAll('section.card')].find(s => /elnovia ai/i.test(s.querySelector('h2')?.textContent || '')) ||
+    [...document.querySelectorAll('section.card')].pop();
+  if (!anchor) return;
+
+  const MAX_SIDE = 1600;
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #lifeScanCard .ls-intro{color:#a9b3cf;font-size:13px;margin:0 0 10px}
+    #lifeScanCard .ls-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:6px 0 8px}
+    #lifeScanCard .ls-btns button{padding:14px 8px;font-size:15px}
+    #lifeScanCard input[type=text]{display:block;width:100%;box-sizing:border-box;margin:4px 0 8px}
+    #lifeScanCard .ls-status{color:#a9b3cf;font-size:13px;min-height:18px}
+    #lifeScanCard .ls-sum{font-size:15px;line-height:1.5;margin:12px 0 8px}
+    #lifeScanCard h3{font-size:14px;margin:14px 0 6px;color:#dfe5fa}
+    #lifeScanCard .ls-chips{display:flex;flex-wrap:wrap;gap:6px}
+    #lifeScanCard .ls-chip{background:#1b2540;border-radius:999px;padding:4px 10px;font-size:12px;color:#c9d2ee}
+    #lifeScanCard .ls-chip.warn{background:#4a2b12;color:#ffcf9e}
+    #lifeScanCard .ls-box{background:#0f1830;border:1px solid #243052;border-radius:14px;padding:12px;margin:10px 0}
+    #lifeScanCard .ls-box h4{margin:0 0 4px;font-size:15px}
+    #lifeScanCard .ls-meta{color:#8390b3;font-size:12px;margin-bottom:6px}
+    #lifeScanCard ol,#lifeScanCard ul{margin:6px 0;padding-left:18px;font-size:13px;line-height:1.5}
+    #lifeScanCard .ls-act{width:100%;margin-top:8px}
+    #lifeScanCard .ls-danger{background:#4a1a1a;border:1px solid #8a2f2f;border-radius:12px;padding:10px;font-size:14px;margin:10px 0;color:#ffd6d6}
+    #lifeScanCard .ls-hyp{padding:7px 0;border-top:1px solid #1f2945;font-size:13px}
+    #lifeScanCard .ls-hyp small{display:block;color:#8390b3;margin-top:2px}
+    #lifeScanCard .ls-small{color:#8390b3;font-size:12px;margin-top:10px}
+  `;
+  document.head.appendChild(st);
+
+  const card = el('section', 'card');
+  card.id = 'lifeScanCard';
+  const h = el('h2', null, '📸 Life Scan');
+  const hid = el('span', null, ' elnovia ai');             // classe la carte dans l'onglet Assistant
+  hid.style.display = 'none';
+  h.appendChild(hid);
+  const intro = el('p', 'ls-intro', 'Prends une photo : ELNOVIA l’analyse et te propose des actions. Pour un courrier ou une facture, utilise plutôt le scan de l’onglet Documents.');
+  const btns = el('div', 'ls-btns');
+  const bFrigo = el('button', null, '🧊 Mon frigo');
+  const bPanne = el('button', null, '🔧 Appareil en panne');
+  [bFrigo, bPanne].forEach(b => b.type = 'button');
+  btns.append(bFrigo, bPanne);
+  const note = el('input');
+  note.type = 'text'; note.maxLength = 250;
+  note.placeholder = 'Précision (facultatif) : ex. « fait un bruit », « pour 2 personnes »';
+  const status = el('div', 'ls-status');
+  const out = el('div');
+  const file = el('input');
+  file.type = 'file'; file.accept = 'image/*'; file.style.display = 'none';
+  card.append(h, intro, btns, note, status, out, file);
+  anchor.after(card);
+
+  let mode = 'frigo';
+  let busy = false;
+  bFrigo.addEventListener('click', () => { if (!busy) { mode = 'frigo'; file.click(); } });
+  bPanne.addEventListener('click', () => { if (!busy) { mode = 'panne'; file.click(); } });
+
+  const toBase64 = blob => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1]);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+  async function toJpeg(f) {
+    let source, w, h2, url = null;
+    try { source = await createImageBitmap(f); w = source.width; h2 = source.height; }
+    catch (e) {
+      url = URL.createObjectURL(f);
+      source = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('image illisible')); i.src = url; });
+      w = source.naturalWidth; h2 = source.naturalHeight;
+    }
+    const ratio = Math.min(1, MAX_SIDE / Math.max(w, h2));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w * ratio)); c.height = Math.max(1, Math.round(h2 * ratio));
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(source, 0, 0, c.width, c.height);
+    if (url) URL.revokeObjectURL(url);
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
+    if (!blob) throw new Error('conversion impossible');
+    return blob;
+  }
+  async function getUser() { try { const { data } = await supabaseClient.auth.getUser(); return data && data.user; } catch (e) { return null; } }
+
+  function setBusy(v, msg) {
+    busy = v;
+    bFrigo.disabled = v; bPanne.disabled = v;
+    status.textContent = msg || '';
+  }
+  function chips(list, cls) {
+    const d = el('div', 'ls-chips');
+    list.forEach(t => d.appendChild(el('span', 'ls-chip' + (cls ? ' ' + cls : ''), t)));
+    return d;
+  }
+  function list(tag, items) {
+    const l = el(tag);
+    items.forEach(t => l.appendChild(el('li', null, t)));
+    return l;
+  }
+
+  async function addShopping(items, btn) {
+    const user = await getUser();
+    if (!user) { btn.textContent = 'Connecte-toi'; return; }
+    btn.disabled = true;
+    const { error } = await supabaseClient.from('shopping_items').insert(
+      items.map(label => ({ user_id: user.id, space_id: null, label: label.charAt(0).toUpperCase() + label.slice(1, 120) }))
+    );
+    if (error) { console.error(error); btn.disabled = false; btn.textContent = 'Erreur, réessaie'; return; }
+    btn.textContent = '✓ Ajouté aux courses';
+  }
+  async function addTask(title, days, btn) {
+    const user = await getUser();
+    if (!user) { btn.textContent = 'Connecte-toi'; return; }
+    btn.disabled = true;
+    const d = new Date(); d.setDate(d.getDate() + days);
+    const { error } = await supabaseClient.from('tasks').insert({
+      user_id: user.id, title: title.slice(0, 120), status: 'todo', category: 'Personnel',
+      priority: days === 0 ? 'high' : 'medium', due_date: ymd(d) + 'T12:00:00'
+    });
+    if (error) { console.error(error); btn.disabled = false; btn.textContent = 'Erreur, réessaie'; return; }
+    btn.textContent = '✓ Tâche ajoutée';
+    try { if (typeof window.loadTasks === 'function') window.loadTasks(); } catch (e) { /* ignoré */ }
+  }
+
+  function renderFrigo(f) {
+    if (f.ingredients.length) { out.appendChild(el('h3', null, 'Ce que je vois')); out.appendChild(chips(f.ingredients)); }
+    if (f.a_consommer_vite.length) { out.appendChild(el('h3', null, '⏳ À consommer vite')); out.appendChild(chips(f.a_consommer_vite, 'warn')); }
+    if (f.recettes.length) out.appendChild(el('h3', null, 'Ce que tu peux cuisiner'));
+    f.recettes.forEach(r => {
+      const box = el('div', 'ls-box');
+      box.appendChild(el('h4', null, r.nom));
+      box.appendChild(el('div', 'ls-meta', '⏱ ' + r.temps_min + ' min' + (r.ingredients_manquants.length ? ' · il manque : ' + r.ingredients_manquants.join(', ') : ' · tu as tout')));
+      if (r.etapes.length) box.appendChild(list('ol', r.etapes));
+      if (r.ingredients_manquants.length) {
+        const b = el('button', 'ls-act', '🛒 Ajouter ce qui manque');
+        b.type = 'button';
+        b.addEventListener('click', () => addShopping(r.ingredients_manquants, b));
+        box.appendChild(b);
+      }
+      out.appendChild(box);
+    });
+    if (f.courses_suggerees.length) {
+      out.appendChild(el('h3', null, 'Pour la liste de courses'));
+      out.appendChild(chips(f.courses_suggerees));
+      const b = el('button', 'ls-act', '🛒 Tout ajouter aux courses');
+      b.type = 'button';
+      b.addEventListener('click', () => addShopping(f.courses_suggerees, b));
+      out.appendChild(b);
+    }
+  }
+
+  function renderPanne(p) {
+    out.appendChild(el('h3', null, '🔧 ' + p.appareil + (p.marque_modele ? ' · ' + p.marque_modele : '')));
+    if (p.urgence === 'danger') out.appendChild(el('div', 'ls-danger', '⚠️ DANGER : ' + (p.securite || 'Mets-toi en sécurité et coupe l’alimentation.')));
+    else if (p.urgence === 'rapide') out.appendChild(el('div', 'ls-meta', '⏰ À traiter assez vite, ça peut s’aggraver.'));
+    if (p.hypotheses.length) {
+      out.appendChild(el('h3', null, 'Causes probables'));
+      p.hypotheses.forEach(x => {
+        const d = el('div', 'ls-hyp', ({ forte: '🔴', moyenne: '🟠', faible: '⚪' }[x.probabilite] || '•') + ' ' + x.cause);
+        d.appendChild(el('small', null, 'À vérifier : ' + x.verification));
+        out.appendChild(d);
+      });
+    }
+    if (p.faire_soi_meme.length) { out.appendChild(el('h3', null, 'Tu peux essayer')); out.appendChild(list('ul', p.faire_soi_meme)); }
+    const box = el('div', 'ls-box');
+    box.appendChild(el('h4', null, p.appeler_pro ? '📞 Un professionnel est probablement nécessaire' : '👍 Tu peux sans doute t’en occuper'));
+    if (p.pro_pourquoi) box.appendChild(el('div', 'ls-meta', p.pro_pourquoi));
+    if (p.cout_estime) box.appendChild(el('div', 'ls-meta', 'Coût indicatif : ' + p.cout_estime));
+    const b1 = el('button', 'ls-act', '➕ Tâche : vérifier ' + p.appareil.toLowerCase());
+    b1.type = 'button';
+    b1.addEventListener('click', () => addTask('Vérifier : ' + p.appareil, p.urgence === 'danger' ? 0 : 1, b1));
+    box.appendChild(b1);
+    if (p.appeler_pro) {
+      const b2 = el('button', 'ls-act', '➕ Tâche : appeler un réparateur');
+      b2.type = 'button';
+      b2.addEventListener('click', () => addTask('Appeler un réparateur : ' + p.appareil, p.urgence === 'danger' ? 0 : 2, b2));
+      box.appendChild(b2);
+    }
+    out.appendChild(box);
+    out.appendChild(el('div', 'ls-small', 'Diagnostic indicatif à partir d’une photo, pas un avis de professionnel. Ne manipule jamais un circuit de gaz ou de fluide frigorigène, ni des pièces sous tension.'));
+  }
+
+  file.addEventListener('change', async () => {
+    const f = file.files && file.files[0];
+    file.value = '';
+    if (!f || busy) return;
+    out.textContent = '';
+    setBusy(true, 'ELNOVIA regarde ta photo… (20 secondes)');
+    try {
+      const user = await getUser();
+      if (!user) { setBusy(false, 'Connecte-toi pour utiliser le Life Scan.'); return; }
+      const blob = await toJpeg(f);
+      const base64 = await toBase64(blob);
+      const { data, error } = await supabaseClient.functions.invoke('life-scan', {
+        body: { mode, mime: 'image/jpeg', base64, note: note.value.trim() }
+      });
+      if (error || !data || !data.result) {
+        let m = (data && data.error) || '';
+        try { if (!m && error && error.context) m = (await error.context.json()).error || ''; } catch (e) { /* ignoré */ }
+        setBusy(false, '⚠️ ' + (m || 'L’analyse n’a pas pu se faire. Réessaie.'));
+        return;
+      }
+      const r = data.result;
+      out.appendChild(el('div', 'ls-sum', r.resume));
+      if (r.type === 'frigo' && r.frigo) renderFrigo(r.frigo);
+      else if (r.type === 'panne' && r.panne) renderPanne(r.panne);
+      setBusy(false, '');
+    } catch (e) {
+      console.error(e);
+      setBusy(false, '⚠️ Photo illisible ou problème de connexion. Réessaie.');
+    }
+  });
+})();
+</script>
  </body></html>
