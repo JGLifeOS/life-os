@@ -9083,4 +9083,124 @@ function showAiActions(actions) {
   } catch (e) { /* ignoré */ }
 })();
 </script>
+  <script>
+// Mode simple v1 : cartes repliables (une seule ouverte par onglet), accueil avec 4 gros boutons, interrupteur Simple / Complet
+(function () {
+  if (window.__elnoviaSimple) return;
+  window.__elnoviaSimple = true;
+  const app = document.getElementById('appContent');
+  if (!app) return;
+
+  let simple = true;
+  try { if (localStorage.getItem('elnoviaSimple') === '0') simple = false; } catch (e) { /* ignoré */ }
+
+  const st = document.createElement('style');
+  st.textContent = `
+    body.eln-simple .card.gradient{display:none !important}
+    body.eln-simple main > small, body.eln-simple main > h1, body.eln-simple main > p.muted{display:none !important}
+    body.eln-simple section.card.eln-fold > h2{cursor:pointer;margin:0;display:flex;align-items:center;justify-content:space-between;gap:8px;-webkit-user-select:none;user-select:none}
+    body.eln-simple section.card.eln-fold > h2::after{content:'›';font-size:22px;color:#8390b3;transform:rotate(90deg);transition:transform .15s}
+    body.eln-simple section.card.eln-fold.eln-open > h2{margin:0 0 12px}
+    body.eln-simple section.card.eln-fold.eln-open > h2::after{transform:rotate(-90deg)}
+    body.eln-simple section.card.eln-fold:not(.eln-open) > *:not(h2){display:none !important}
+    body.eln-simple section.card.eln-fold:not(.eln-open){padding:14px 18px}
+    #simpleQuick{display:none}
+    body.eln-simple.eln-home #simpleQuick{display:block}
+    #simpleQuick h2{margin:0 0 4px}
+    #simpleQuick p{margin:0 0 12px;color:#a9b3cf;font-size:14px}
+    #simpleQuick .sq-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    #simpleQuick button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:88px;padding:12px 8px;font-size:15px;font-weight:700;border-radius:16px;margin:0;width:100%}
+    #simpleQuick button span{font-size:28px;line-height:1}
+    #simpleMode{background:#1b2540;color:#c9d2ee;border:1px solid #2d3a5e;border-radius:999px;padding:5px 12px;font-size:12px;font-weight:600;width:auto;margin:0}
+  `;
+  document.head.appendChild(st);
+
+  // ---------- interrupteur dans l'en-tête ----------
+  const header = document.querySelector('#appContent > header') || document.querySelector('header');
+  const sw = document.createElement('button');
+  sw.type = 'button'; sw.id = 'simpleMode';
+  if (header) header.appendChild(sw);
+
+  // ---------- gros boutons d'accueil ----------
+  const quick = document.createElement('div');
+  quick.className = 'card'; quick.id = 'simpleQuick';
+  quick.dataset.simpleSkip = '1';
+  const qh = document.createElement('h2'); qh.textContent = 'Que veux-tu faire ?';
+  const qp = document.createElement('p'); qp.textContent = 'Un geste, et c’est fait.';
+  const grid = document.createElement('div'); grid.className = 'sq-grid';
+  quick.append(qh, qp, grid);
+
+  const cards = () => [...app.querySelectorAll('section.card')];
+  const h2of = c => (c.querySelector('h2')?.textContent || '').toLowerCase();
+  function goTab(id) { const b = document.querySelector('#elnTabs button[data-tab="' + id + '"]'); if (b) b.click(); }
+  function openCard(c) { if (c && c.classList.contains('eln-fold')) c.classList.add('eln-open'); }
+  function jump(tab, find, focusSel) {
+    goTab(tab);
+    setTimeout(() => {
+      const c = cards().find(find);
+      if (c) { openCard(c); c.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+      const f = focusSel && document.querySelector(focusSel);
+      if (f) setTimeout(() => { try { f.focus(); } catch (e) { /* ignoré */ } }, 250);
+    }, 60);
+  }
+  [
+    ['➕', 'Ajouter une tâche', () => jump('tasks', c => !!c.querySelector('#taskInput'), '#taskInput')],
+    ['💶', 'Noter une dépense', () => jump('money', c => /financ|dépense/.test(h2of(c)), null)],
+    ['📸', 'Scanner', () => jump('assistant', c => c.id === 'lifeScanCard', null)],
+    ['✦', 'Demander à Nova', () => jump('assistant', c => c.id === 'life-ai', '#aiQuestion')]
+  ].forEach(([ico, label, fn]) => {
+    const b = document.createElement('button'); b.type = 'button';
+    const i = document.createElement('span'); i.textContent = ico;
+    b.append(i, document.createTextNode(label));
+    b.addEventListener('click', fn);
+    grid.appendChild(b);
+  });
+
+  // ---------- repli des cartes ----------
+  const seenTab = {};
+  function fold() {
+    const main = app.querySelector('main');
+    if (main && !quick.isConnected) main.prepend(quick);
+    cards().forEach(c => {
+      if (c.dataset.simpleSkip || c.dataset.foldInit || c.classList.contains('gradient')) return;
+      if (!c.dataset.tab) return;
+      const h = c.querySelector(':scope > h2');
+      if (!h) return;                                  // carte sans titre direct : on n'y touche pas
+      c.dataset.foldInit = '1';
+      c.classList.add('eln-fold');
+      const tab = c.dataset.tab || 'x';
+      const first = !seenTab[tab] || c.id === 'todayCard';
+      seenTab[tab] = true;
+      if (first) c.classList.add('eln-open');
+      h.addEventListener('click', () => { if (document.body.classList.contains('eln-simple')) c.classList.toggle('eln-open'); });
+    });
+  }
+
+  function apply() {
+    document.body.classList.toggle('eln-simple', simple);
+    sw.textContent = simple ? '⚙️ Mode simple' : '⚙️ Mode complet';
+    sw.title = simple ? 'Passer en mode complet' : 'Passer en mode simple';
+    document.querySelectorAll('#elnTabs button').forEach(b => {
+      const l = b.querySelectorAll('span')[1];
+      if (l && b.dataset.tab === 'assistant') l.textContent = 'Nova';
+    });
+  }
+  sw.addEventListener('click', () => {
+    simple = !simple;
+    try { localStorage.setItem('elnoviaSimple', simple ? '1' : '0'); } catch (e) { /* ignoré */ }
+    apply();
+  });
+
+  // si le code ouvre un champ caché dans une carte repliée, on la déplie
+  const unfold = el => { try { const c = el && el.closest && el.closest('section.card.eln-fold'); if (c) c.classList.add('eln-open'); } catch (e) { /* ignoré */ } };
+  ['focus', 'click'].forEach(n => { const o = HTMLElement.prototype[n]; HTMLElement.prototype[n] = function () { unfold(this); return o.apply(this, arguments); }; });
+  const os = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = function () { unfold(this); return os.apply(this, arguments); };
+
+  let queued = false;
+  new MutationObserver(() => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; fold(); apply(); }); }).observe(app, { childList: true, subtree: true });
+  setTimeout(() => { fold(); apply(); }, 300);
+  fold(); apply();
+})();
+</script>
  </body></html>
