@@ -8549,4 +8549,31 @@ function showAiActions(actions) {
   mem.after(sim);
 })();
 </script>
+  <script>
+// Remise à zéro v1 : bouton « Effacer » dans les cartes Ma mémoire et Simulateur de vie
+(function () {
+  function addReset(cardId, goLabel) {
+    const card = document.getElementById(cardId);
+    if (!card || card.dataset.reset) return;
+    const out = card.lastElementChild;                    // zone de réponse
+    const go = card.querySelector('button.ms-go');
+    const field = card.querySelector('input[type=text], textarea');
+    if (!out || !go || !field) return;
+    card.dataset.reset = '1';
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = '↺ effacer';
+    b.style.cssText = 'display:block;margin:6px 0 0 auto;background:transparent;color:#6f7b9e;border:0;padding:4px 2px;font-size:12px;width:auto;box-shadow:none;';
+    b.addEventListener('click', () => {
+      field.value = '';
+      out.textContent = '';
+      go.textContent = goLabel;
+      go.disabled = false;
+    });
+    card.insertBefore(b, out);
+  }
+  addReset('memoryCard', '🔎 Demander');
+  addReset('simCard', '🔮 Simuler');
+})();
+</script>
  </body></html>
