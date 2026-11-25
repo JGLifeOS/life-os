@@ -9302,4 +9302,112 @@ function showAiActions(actions) {
   try { supabaseClient.auth.onAuthStateChange(() => setTimeout(draw, 800)); } catch (e) { /* ignoré */ }
 })();
 </script>
+  <script>
+// Objectifs d'épargne v1 : un but, un montant, une barre de progression
+(function () {
+  if (document.getElementById('goalsCard')) return;
+  const anchor = document.getElementById('budgetSection') ||
+    [...document.querySelectorAll('section.card')].find(s => /financ/i.test(s.querySelector('h2')?.textContent || ''));
+  if (!anchor) return;
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const eur = n => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' €';
+  const num = v => parseFloat(String(v).replace(',', '.'));
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #goalsCard .gl-intro{color:#a9b3cf;font-size:13px;margin:0 0 10px}
+    #goalsCard input{display:block;width:100%;box-sizing:border-box;margin:6px 0}
+    #goalsCard .gl-item{border-top:1px solid #1f2945;padding:12px 0}
+    #goalsCard .gl-top{display:flex;justify-content:space-between;gap:8px;font-size:15px;font-weight:600}
+    #goalsCard .gl-bar{height:10px;background:#1b2540;border-radius:999px;overflow:hidden;margin:8px 0 6px}
+    #goalsCard .gl-bar i{display:block;height:100%;background:linear-gradient(90deg,#7c5cff,#5fd39a);border-radius:999px}
+    #goalsCard .gl-sub{color:#8390b3;font-size:12px}
+    #goalsCard .gl-add{display:flex;gap:8px;margin-top:8px}
+    #goalsCard .gl-add input{margin:0;flex:1}
+    #goalsCard .gl-add button{width:auto;margin:0;padding:8px 12px;font-size:13px}
+    #goalsCard .gl-del{background:none;color:#8390b3;font-size:12px;text-decoration:underline;border:0;padding:6px 0;width:auto;margin:0}
+    #goalsCard .gl-done{color:#5fd39a;font-weight:700}
+    #goalsCard .gl-err{color:#ffcf9e;font-size:13px}
+  `;
+  document.head.appendChild(st);
+
+  const card = el('section', 'card'); card.id = 'goalsCard';
+  const h = el('h2', null, '🎯 Mes objectifs d’épargne');
+  const hid = el('span', null, ' financ'); hid.style.display = 'none'; h.appendChild(hid);
+  const intro = el('p', 'gl-intro', 'Un but, un montant : ELNOVIA te montre où tu en es.');
+  const list = el('div');
+  const det = el('details');
+  det.style.cssText = 'margin-top:10px';
+  const sum = el('summary', null, '➕ Nouvel objectif'); sum.style.cssText = 'cursor:pointer;font-weight:600;color:#c4b5ff';
+  const fLabel = el('input'); fLabel.type = 'text'; fLabel.maxLength = 60; fLabel.placeholder = 'Ex. : Vacances d’été, Voiture…';
+  const fTarget = el('input'); fTarget.type = 'number'; fTarget.inputMode = 'decimal'; fTarget.min = '1'; fTarget.placeholder = 'Montant à atteindre (€)';
+  const fSaved = el('input'); fSaved.type = 'number'; fSaved.inputMode = 'decimal'; fSaved.min = '0'; fSaved.placeholder = 'Déjà mis de côté (€, facultatif)';
+  const fLab2 = el('div', 'gl-sub', 'Date visée (facultatif) :');
+  const fDate = el('input'); fDate.type = 'date';
+  const fGo = el('button', null, 'Créer l’objectif'); fGo.type = 'button';
+  const err = el('div', 'gl-err');
+  det.append(sum, fLabel, fTarget, fSaved, fLab2, fDate, fGo, err);
+  card.append(h, intro, list, det);
+  anchor.after(card);
+
+  async function user() { try { const { data } = await supabaseClient.auth.getUser(); return data && data.user; } catch (e) { return null; } }
+
+  async function load() {
+    try {
+      const { data, error } = await supabaseClient.from('savings_goals').select('id, label, target, saved, deadline').order('created_at', { ascending: true });
+      if (error) throw error;
+      list.textContent = '';
+      if (!(data || []).length) { list.appendChild(el('p', 'gl-sub', 'Aucun objectif pour l’instant.')); return; }
+      data.forEach(g => {
+        const pct = Math.min(100, Math.round(100 * g.saved / g.target));
+        const it = el('div', 'gl-item');
+        const top = el('div', 'gl-top'); top.append(el('span', null, g.label), el('span', pct >= 100 ? 'gl-done' : null, pct >= 100 ? '🎉 Atteint !' : pct + ' %'));
+        const bar = el('div', 'gl-bar'); const fill = el('i'); fill.style.width = pct + '%'; bar.appendChild(fill);
+        const left = Math.max(0, g.target - g.saved);
+        let sub = eur(g.saved) + ' sur ' + eur(g.target) + (left > 0 ? ' · reste ' + eur(left) : '');
+        if (g.deadline && left > 0) {
+          const months = Math.max(1, Math.ceil((new Date(g.deadline + 'T12:00:00') - new Date()) / (30.4 * 864e5)));
+          sub += ' · ' + eur(left / months) + ' par mois pour le ' + new Date(g.deadline + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+        }
+        it.append(top, bar, el('div', 'gl-sub', sub));
+        if (left > 0) {
+          const add = el('div', 'gl-add'); const inp = el('input'); inp.type = 'number'; inp.inputMode = 'decimal'; inp.min = '1'; inp.placeholder = 'Ajouter (€)';
+          const b = el('button', null, '＋ Ajouter'); b.type = 'button';
+          b.addEventListener('click', async () => {
+            const v = num(inp.value); if (!(v > 0)) return;
+            b.disabled = true;
+            const { error: e2 } = await supabaseClient.from('savings_goals').update({ saved: Math.min(g.target, +(Number(g.saved) + v).toFixed(2)) }).eq('id', g.id);
+            if (e2) { console.error(e2); b.disabled = false; b.textContent = 'Erreur'; return; }
+            load();
+          });
+          add.append(inp, b); it.appendChild(add);
+        }
+        const del = el('button', 'gl-del', 'Supprimer cet objectif'); del.type = 'button';
+        del.addEventListener('click', async () => {
+          if (del.dataset.sure !== '1') { del.dataset.sure = '1'; del.textContent = 'Toucher encore pour confirmer'; return; }
+          await supabaseClient.from('savings_goals').delete().eq('id', g.id); load();
+        });
+        it.appendChild(del);
+        list.appendChild(it);
+      });
+    } catch (e) { list.textContent = ''; list.appendChild(el('p', 'gl-sub', 'Objectifs indisponibles pour le moment.')); }
+  }
+
+  fGo.addEventListener('click', async () => {
+    err.textContent = '';
+    const label = fLabel.value.trim(), target = num(fTarget.value), saved = num(fSaved.value) || 0;
+    if (!label || !(target > 0)) { err.textContent = 'Donne un nom et un montant à atteindre.'; return; }
+    const u = await user(); if (!u) { err.textContent = 'Connecte-toi.'; return; }
+    fGo.disabled = true;
+    const { error } = await supabaseClient.from('savings_goals').insert({ user_id: u.id, label, target, saved: Math.min(saved, target), deadline: fDate.value || null });
+    fGo.disabled = false;
+    if (error) { console.error(error); err.textContent = 'Impossible de créer l’objectif (la table est-elle créée ?).'; return; }
+    fLabel.value = fTarget.value = fSaved.value = fDate.value = '';
+    det.open = false; load();
+  });
+
+  load();
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 600)); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
