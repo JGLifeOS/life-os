@@ -8065,4 +8065,214 @@ function showAiActions(actions) {
   try { supabaseClient.auth.onAuthStateChange(() => setTimeout(refresh, 300)); } catch (e) { /* ignoré */ }
 })();
 </script>
+  <script>
+// Bilan de vie v1 : l'IA lit toutes tes données, fait le point et propose des actions (suivi d'un bilan à l'autre)
+(function () {
+  if (document.getElementById('lifeReviewCard')) return;
+  const anchor = document.getElementById('life-ai') || document.getElementById('todayCard') ||
+    [...document.querySelectorAll('section.card')].find(s => /elnovia ai/i.test(s.querySelector('h2')?.textContent || '')) ||
+    [...document.querySelectorAll('section.card')].pop();
+  if (!anchor) return;
+
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+  const eur = n => Number(n || 0).toFixed(2).replace('.', ',').replace(',00', '') + ' €';
+  const ICON = { argent: '💶', temps: '⏳', projets: '🎯', emploi: '💼', foyer: '🏠' };
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #lifeReviewCard .lr-intro{color:#a9b3cf;font-size:13px;margin:0 0 10px}
+    #lifeReviewCard input[type=text]{display:block;width:100%;box-sizing:border-box;margin:6px 0 10px}
+    #lifeReviewCard .lr-go{width:100%}
+    #lifeReviewCard .lr-score{display:flex;align-items:center;gap:14px;margin:14px 0 6px}
+    #lifeReviewCard .lr-ring{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;flex:none}
+    #lifeReviewCard .lr-sum{flex:1;font-size:14px;line-height:1.45}
+    #lifeReviewCard .lr-kpis{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+    #lifeReviewCard .lr-kpi{background:#0f1830;border:1px solid #243052;border-radius:10px;padding:5px 9px;font-size:12px;color:#c9d2ee}
+    #lifeReviewCard h3{font-size:14px;margin:14px 0 6px;color:#dfe5fa}
+    #lifeReviewCard .lr-pb{padding:8px 0;border-top:1px solid #1f2945;font-size:14px}
+    #lifeReviewCard .lr-pb small{display:block;color:#8390b3;margin-top:2px;font-size:13px}
+    #lifeReviewCard .lr-act{display:flex;gap:10px;align-items:center;padding:9px 0;border-top:1px solid #1f2945}
+    #lifeReviewCard .lr-act div{flex:1;min-width:0;font-size:14px}
+    #lifeReviewCard .lr-act small{display:block;color:#8390b3;font-size:12px;margin-top:2px}
+    #lifeReviewCard .lr-act button{white-space:nowrap;padding:7px 10px;font-size:13px}
+    #lifeReviewCard .lr-follow{background:#0f1830;border:1px solid #243052;border-radius:12px;padding:10px;font-size:13px;margin-top:10px;color:#c9d2ee}
+    #lifeReviewCard .lr-date{color:#8390b3;font-size:12px;margin-top:10px}
+  `;
+  document.head.appendChild(st);
+
+  const card = document.createElement('section');
+  card.className = 'card';
+  card.id = 'lifeReviewCard';
+  const h = document.createElement('h2');
+  h.textContent = '🧭 Bilan de vie';
+  const hid = document.createElement('span');          // classe la carte dans l'onglet Assistant
+  hid.style.display = 'none';
+  hid.textContent = ' elnovia ai';
+  h.appendChild(hid);
+  const intro = document.createElement('p');
+  intro.className = 'lr-intro';
+  intro.textContent = 'ELNOVIA regarde tes tâches, dépenses, abonnements, budgets et candidatures, puis te dit ce qui ne va pas et ce qu’on peut faire.';
+  const focus = document.createElement('input');
+  focus.type = 'text';
+  focus.maxLength = 300;
+  focus.placeholder = 'Un sujet qui te préoccupe ? (facultatif)';
+  const go = document.createElement('button');
+  go.type = 'button';
+  go.className = 'lr-go';
+  go.textContent = '✨ Faire mon bilan';
+  const out = document.createElement('div');
+  card.append(h, intro, focus, go, out);
+  anchor.after(card);
+
+  let busy = false;
+
+  async function getUser() {
+    try { const { data } = await supabaseClient.auth.getUser(); return data && data.user; } catch (e) { return null; }
+  }
+
+  async function addTask(user, a, btn) {
+    btn.disabled = true;
+    const day = ymd(addDays(new Date(), Math.max(0, Math.min(14, a.jours || 0))));
+    const { error } = await supabaseClient.from('tasks').insert({
+      user_id: user.id, title: String(a.titre).slice(0, 120), status: 'todo', category: 'Personnel',
+      priority: 'medium', due_date: day + 'T12:00:00'
+    });
+    if (error) { console.error(error); btn.disabled = false; btn.textContent = 'Erreur'; return; }
+    btn.textContent = '✓ Ajoutée';
+    try { if (typeof window.loadTasks === 'function') window.loadTasks(); } catch (e) { /* ignoré */ }
+  }
+
+  function render(r, when) {
+    out.textContent = '';
+    const score = Math.max(0, Math.min(100, Number(r.score) || 0));
+    const col = score >= 70 ? '#2f9e6b' : score >= 45 ? '#d9962b' : '#d4524f';
+
+    const top = document.createElement('div');
+    top.className = 'lr-score';
+    const ring = document.createElement('div');
+    ring.className = 'lr-ring';
+    ring.style.background = 'conic-gradient(' + col + ' ' + score * 3.6 + 'deg,#1b2540 0)';
+    ring.style.boxShadow = 'inset 0 0 0 7px #0b1224';
+    ring.textContent = score;
+    const sum = document.createElement('div');
+    sum.className = 'lr-sum';
+    sum.textContent = r.resume || '';
+    top.append(ring, sum);
+    out.appendChild(top);
+
+    const c = r.chiffres || {};
+    const kp = document.createElement('div');
+    kp.className = 'lr-kpis';
+    [['💶 ce mois', eur(c.depense_mois)], ['🔁 abonnements/mois', eur(c.abonnements_mensuels)],
+     ['📋 ouvertes', c.taches_ouvertes], ['⚠️ en retard', c.taches_en_retard]].forEach(([l, v]) => {
+      if (v === undefined) return;
+      const k = document.createElement('span');
+      k.className = 'lr-kpi';
+      k.textContent = l + ' : ' + v;
+      kp.appendChild(k);
+    });
+    out.appendChild(kp);
+
+    if ((r.problemes || []).length) {
+      const t = document.createElement('h3');
+      t.textContent = 'Ce que je constate';
+      out.appendChild(t);
+      r.problemes.forEach(p => {
+        const d = document.createElement('div');
+        d.className = 'lr-pb';
+        d.textContent = (ICON[p.domaine] || '•') + ' ' + p.titre;
+        const s = document.createElement('small');
+        s.textContent = p.detail;
+        d.appendChild(s);
+        out.appendChild(d);
+      });
+    }
+
+    if ((r.actions || []).length) {
+      const t = document.createElement('h3');
+      t.textContent = 'Ce que je te propose';
+      out.appendChild(t);
+      r.actions.forEach(a => {
+        const row = document.createElement('div');
+        row.className = 'lr-act';
+        const txt = document.createElement('div');
+        txt.textContent = a.titre;
+        const s = document.createElement('small');
+        s.textContent = a.pourquoi + (a.jours ? ' · dans ' + a.jours + ' j' : ' · aujourd’hui');
+        txt.appendChild(s);
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = '➕ Tâche';
+        b.addEventListener('click', async () => {
+          const user = await getUser();
+          if (!user) { b.textContent = 'Connecte-toi'; return; }
+          addTask(user, a, b);
+        });
+        row.append(txt, b);
+        out.appendChild(row);
+      });
+    }
+
+    if (r.suivi) {
+      const f = document.createElement('div');
+      f.className = 'lr-follow';
+      f.textContent = '📈 Suivi : ' + r.suivi;
+      out.appendChild(f);
+    }
+    if (when) {
+      const d = document.createElement('div');
+      d.className = 'lr-date';
+      d.textContent = 'Bilan du ' + new Date(when).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) + ' à ' +
+        new Date(when).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      out.appendChild(d);
+    }
+  }
+
+  async function loadLast() {
+    try {
+      const user = await getUser();
+      if (!user) return;
+      const { data, error } = await supabaseClient.from('life_reviews')
+        .select('created_at, result').order('created_at', { ascending: false }).limit(1);
+      if (error || !data || !data[0]) return;
+      render(data[0].result, data[0].created_at);
+    } catch (e) { /* table pas encore créée : on ignore */ }
+  }
+
+  go.addEventListener('click', async () => {
+    if (busy) return;
+    busy = true;
+    go.disabled = true;
+    go.textContent = '⏳ J’analyse ta vie… (20 secondes)';
+    out.textContent = '';
+    try {
+      const { data, error } = await supabaseClient.functions.invoke('life-review', { body: { focus: focus.value.trim() } });
+      if (error || !data || data.error || !data.result) {
+        let m = (data && data.error) || '';
+        try { if (!m && error && error.context) m = (await error.context.json()).error || ''; } catch (e) { /* ignoré */ }
+        const p = document.createElement('p');
+        p.className = 'lr-intro';
+        p.textContent = '⚠️ ' + (m || 'Le bilan n’a pas pu se faire. Réessaie dans un instant.');
+        out.appendChild(p);
+      } else {
+        render(data.result, new Date().toISOString());
+      }
+    } catch (e) {
+      console.error(e);
+      const p = document.createElement('p');
+      p.className = 'lr-intro';
+      p.textContent = '⚠️ Problème de connexion.';
+      out.appendChild(p);
+    }
+    go.disabled = false;
+    go.textContent = '✨ Refaire mon bilan';
+    busy = false;
+  });
+
+  loadLast();
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(loadLast, 600)); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
