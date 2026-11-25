@@ -9203,4 +9203,56 @@ function showAiActions(actions) {
   fold(); apply();
 })();
 </script>
+    <script>
+// Mode simple v2 : 5 onglets au lieu de 6 (Documents rangé dans Plus), onglets plus lisibles, textes plus clairs
+(function () {
+  if (window.__elnoviaSimple2) return;
+  window.__elnoviaSimple2 = true;
+  const app = document.getElementById('appContent');
+  if (!app) return;
+
+  const st = document.createElement('style');
+  st.textContent = `
+    body.eln-simple #elnTabs button[data-tab="docs"]{display:none !important}
+    body.eln-simple #elnTabs button{padding:8px 2px;font-size:12px}
+    body.eln-simple #elnTabs button span.i{font-size:24px}
+    body.eln-simple #elnTabs button.on{background:rgba(124,92,255,.16)}
+    body.eln-simple #simpleQuick button{min-height:96px;font-size:16px}
+    body.eln-simple .muted{font-size:14px}
+  `;
+  document.head.appendChild(st);
+
+  const LABELS = { home: 'Aujourd’hui', tasks: 'Tâches', money: 'Argent', assistant: 'Nova', more: 'Plus' };
+  const isSimple = () => document.body.classList.contains('eln-simple');
+  const activeTab = () => { const b = document.querySelector('#elnTabs button.on'); return b ? b.dataset.tab : 'home'; };
+
+  function remap() {
+    const nav = document.getElementById('elnTabs');
+    if (!nav) return;
+    if (isSimple()) {
+      const act = activeTab();
+      app.querySelectorAll('section.card').forEach(c => {
+        if (c.dataset.tab === 'docs') { c.dataset.tab = 'more'; c.classList.toggle('eln-hidden', act !== 'more'); }
+      });
+      nav.querySelectorAll('button').forEach(b => {
+        const l = b.querySelectorAll('span')[1];
+        if (l && LABELS[b.dataset.tab]) l.textContent = LABELS[b.dataset.tab];
+      });
+      if (act === 'docs') { const m = nav.querySelector('button[data-tab="more"]'); if (m) m.click(); }
+    } else {
+      const l = nav.querySelector('button[data-tab="home"] span:last-child');
+      nav.querySelectorAll('button').forEach(b => {
+        const sp = b.querySelectorAll('span')[1];
+        const full = { home: 'Accueil', tasks: 'Tâches', money: 'Argent', docs: 'Documents', assistant: 'Assistant', more: 'Plus' }[b.dataset.tab];
+        if (sp && full) sp.textContent = full;
+      });
+    }
+  }
+
+  let queued = false;
+  new MutationObserver(() => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; remap(); }); }).observe(app, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+  document.addEventListener('click', e => { if (e.target.closest && e.target.closest('#simpleMode')) setTimeout(() => { const b = document.querySelector('#elnTabs button.on'); if (b) b.click(); remap(); }, 50); }, true);
+  setTimeout(remap, 400); remap();
+})();
+</script>
  </body></html>
