@@ -8370,4 +8370,183 @@ function showAiActions(actions) {
   try { supabaseClient.auth.onAuthStateChange(() => setTimeout(loadAll, 600)); } catch (e) { /* ignoré */ }
 })();
 </script>
+  <script>
+// Mémoire + Simulateur v1 : poser une question sur toutes ses données, et comparer des scénarios de vie
+(function () {
+  if (document.getElementById('memoryCard')) return;
+  const anchor = document.getElementById('lifeReviewCard') ||
+    [...document.querySelectorAll('section.card')].find(s => /elnovia ai/i.test(s.querySelector('h2')?.textContent || '')) ||
+    [...document.querySelectorAll('section.card')].pop();
+  if (!anchor) return;
+
+  const eur = n => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 }) + ' €';
+  const signed = n => (n > 0 ? '+' : n < 0 ? '−' : '') + eur(Math.abs(n));
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const SRC = { document: '📄', depense: '💶', tache: '✅', candidature: '💼', courses: '🛒' };
+
+  const st = document.createElement('style');
+  st.textContent = `
+    .ms-intro{color:#a9b3cf;font-size:13px;margin:0 0 10px}
+    .ms-card input[type=text],.ms-card input[type=number],.ms-card textarea{display:block;width:100%;box-sizing:border-box;margin:6px 0 10px}
+    .ms-card textarea{min-height:84px;resize:vertical;font:inherit}
+    .ms-go{width:100%}
+    .ms-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+    .ms-chip{background:#1b2540;color:#c9d2ee;border:1px solid #243052;border-radius:999px;padding:5px 10px;font-size:12px}
+    .ms-answer{margin-top:12px;font-size:15px;line-height:1.5}
+    .ms-warn{color:#ffcf9e;font-size:12px;margin-top:6px}
+    .ms-card details{margin-top:10px;background:#0f1830;border:1px solid #243052;border-radius:12px;padding:8px 12px}
+    .ms-card summary{cursor:pointer;font-size:13px;font-weight:600}
+    .ms-src{font-size:12px;color:#a9b3cf;padding:6px 0;border-top:1px solid #1f2945}
+    .ms-base{background:#0f1830;border:1px solid #243052;border-radius:12px;padding:10px;font-size:13px;color:#c9d2ee;margin:12px 0}
+    .ms-sc{border:1px solid #243052;border-radius:14px;padding:12px;margin:10px 0;background:#0f1830}
+    .ms-sc h3{margin:0 0 4px;font-size:15px}
+    .ms-sc .ms-res{color:#a9b3cf;font-size:13px;margin:0 0 8px}
+    .ms-big{font-size:24px;font-weight:700;margin:2px 0}
+    .ms-up{color:#ff8f8c}.ms-down{color:#5fd39a}
+    .ms-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
+    .ms-cell{background:#0b1224;border:1px solid #1f2945;border-radius:10px;padding:7px 9px;font-size:12px;color:#a9b3cf}
+    .ms-cell b{display:block;font-size:15px;color:#f7f8ff;margin-top:2px}
+    .ms-list{margin:6px 0;padding-left:0;list-style:none;font-size:13px;line-height:1.45}
+    .ms-hyp{font-size:12px;color:#8390b3;margin-top:6px}
+    .ms-reco{background:#12203f;border:1px solid #2d4175;border-radius:12px;padding:10px;font-size:14px;margin-top:10px}
+    .ms-ask{font-size:13px;color:#c9d2ee;margin-top:8px}
+  `;
+  document.head.appendChild(st);
+
+  function makeCard(id, title, hidden) {
+    const card = el('section', 'card ms-card');
+    card.id = id;
+    const h = el('h2', null, title);
+    const hid = el('span', null, ' elnovia ai');           // classe la carte dans l'onglet Assistant
+    hid.style.display = 'none';
+    h.appendChild(hid);
+    card.appendChild(h);
+    return card;
+  }
+  async function call(name, body) {
+    try {
+      const { data, error } = await supabaseClient.functions.invoke(name, { body });
+      if (error || !data || data.error || !data.result) {
+        let m = (data && data.error) || '';
+        try { if (!m && error && error.context) m = (await error.context.json()).error || ''; } catch (e) { /* ignoré */ }
+        return { error: m || 'Ça n’a pas pu se faire. Réessaie dans un instant.' };
+      }
+      return { result: data.result };
+    } catch (e) { console.error(e); return { error: 'Problème de connexion.' }; }
+  }
+
+  // ============ 1. MÉMOIRE ============
+  const mem = makeCard('memoryCard', '🧠 Ma mémoire');
+  mem.appendChild(el('p', 'ms-intro', 'Pose une question sur tes documents, dépenses, tâches ou candidatures. ELNOVIA répond avec ce qu’elle trouve dans tes données.'));
+  const chips = el('div', 'ms-chips');
+  ['Combien j’ai dépensé en tout chez Winamax ?', 'Quels documents expirent bientôt ?', 'Où en sont mes candidatures ?'].forEach(q => {
+    const c = el('button', 'ms-chip', q);
+    c.type = 'button';
+    c.addEventListener('click', () => { qIn.value = q; ask(); });
+    chips.appendChild(c);
+  });
+  const qIn = el('input');
+  qIn.type = 'text'; qIn.maxLength = 300; qIn.placeholder = 'Ta question…';
+  const qGo = el('button', 'ms-go', '🔎 Demander');
+  qGo.type = 'button';
+  const qOut = el('div');
+  mem.append(chips, qIn, qGo, qOut);
+
+  let qBusy = false;
+  async function ask() {
+    const q = qIn.value.trim();
+    if (q.length < 3 || qBusy) return;
+    qBusy = true; qGo.disabled = true; qGo.textContent = '⏳ Je cherche…'; qOut.textContent = '';
+    const r = await call('life-memory', { question: q });
+    qOut.textContent = '';
+    if (r.error) { qOut.appendChild(el('p', 'ms-warn', '⚠️ ' + r.error)); }
+    else {
+      qOut.appendChild(el('div', 'ms-answer', r.result.reponse));
+      if (r.result.confiance === 'incertaine') qOut.appendChild(el('div', 'ms-warn', '⚠️ Je ne suis pas sûre de cette réponse : vérifie dans tes données.'));
+      if ((r.result.sources || []).length) {
+        const d = el('details'); d.appendChild(el('summary', null, 'Sur quoi je m’appuie (' + r.result.sources.length + ')'));
+        r.result.sources.forEach(s => d.appendChild(el('div', 'ms-src', (SRC[s.type] || '•') + ' ' + s.texte)));
+        qOut.appendChild(d);
+      }
+    }
+    qGo.disabled = false; qGo.textContent = '🔎 Demander'; qBusy = false;
+  }
+  qGo.addEventListener('click', ask);
+  qIn.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); ask(); } });
+
+  // ============ 2. SIMULATEUR ============
+  const sim = makeCard('simCard', '🔮 Simulateur de vie');
+  sim.appendChild(el('p', 'ms-intro', 'Décris ce que tu envisages (déménager, acheter une voiture, changer de métier…). ELNOVIA compare plusieurs scénarios chiffrés à partir de tes vraies dépenses.'));
+  const sIn = el('textarea');
+  sIn.maxLength = 600;
+  sIn.placeholder = 'Ex. : Je veux acheter une voiture à 12 000 € avec un crédit sur 5 ans, ou prendre un loyer plus grand à 750 € au lieu de 600 €…';
+  const rev = el('input');
+  rev.type = 'number'; rev.inputMode = 'decimal'; rev.min = '0'; rev.placeholder = 'Ton revenu mensuel net en € (facultatif, pour voir ce qu’il te reste)';
+  try { const saved = localStorage.getItem('elnoviaRevenu'); if (saved) rev.value = saved; } catch (e) { /* ignoré */ }
+  const sGo = el('button', 'ms-go', '🔮 Simuler');
+  sGo.type = 'button';
+  const sOut = el('div');
+  sim.append(sIn, rev, sGo, sOut);
+
+  function list(items, icon) {
+    const ul = el('ul', 'ms-list');
+    items.forEach(t => ul.appendChild(el('li', null, icon + ' ' + t)));
+    return ul;
+  }
+  function cell(label, value) {
+    const c = el('div', 'ms-cell', label);
+    c.appendChild(el('b', null, value));
+    return c;
+  }
+  function renderSim(r) {
+    sOut.textContent = '';
+    const b = r.base || {};
+    const base = el('div', 'ms-base');
+    base.appendChild(document.createTextNode('📍 Aujourd’hui : ' + eur(b.depenses_mensuelles) + ' de dépenses par mois (moyenne sur ' + b.mois + ' mois, dont ' + eur(b.charges_fixes) + ' de charges fixes)' +
+      (b.revenu ? ' · il te reste ' + eur(b.reste_mensuel) + '/mois.' : '.')));
+    sOut.appendChild(base);
+
+    (r.scenarios || []).forEach(s => {
+      const box = el('div', 'ms-sc');
+      box.appendChild(el('h3', null, s.nom));
+      box.appendChild(el('p', 'ms-res', s.resume));
+      const big = el('div', 'ms-big ' + (s.variation_mensuelle > 0 ? 'ms-up' : 'ms-down'), signed(s.variation_mensuelle) + ' / mois');
+      box.appendChild(big);
+      const g = el('div', 'ms-grid');
+      g.append(
+        cell('Coût de départ', eur(s.cout_initial)),
+        cell('Sur 12 mois', signed(s.surcout_12_mois)),
+        cell('Sur 24 mois', signed(s.surcout_24_mois)),
+        cell('Dépenses par mois', eur(s.nouvelles_depenses_mensuelles))
+      );
+      if (s.reste_mensuel != null) g.appendChild(cell('Il te resterait / mois', eur(s.reste_mensuel)));
+      if (s.temps_hebdo_h) g.appendChild(cell('Temps libre', (s.temps_hebdo_h > 0 ? '+' : '−') + Math.abs(s.temps_hebdo_h) + ' h / semaine'));
+      box.appendChild(g);
+      if (s.avantages.length) box.appendChild(list(s.avantages, '✅'));
+      if (s.risques.length) box.appendChild(list(s.risques, '⚠️'));
+      if (s.hypotheses.length) box.appendChild(el('div', 'ms-hyp', 'Estimations : ' + s.hypotheses.join(' · ')));
+      sOut.appendChild(box);
+    });
+    if (r.recommandation) sOut.appendChild(el('div', 'ms-reco', '💡 ' + r.recommandation));
+    if ((r.a_preciser || []).length) sOut.appendChild(el('div', 'ms-ask', '❓ Pour affiner : ' + r.a_preciser.join(' · ')));
+    sOut.appendChild(el('div', 'ms-hyp', 'Ce sont des estimations pour t’aider à réfléchir, pas un conseil financier.'));
+  }
+
+  let sBusy = false;
+  sGo.addEventListener('click', async () => {
+    const t = sIn.value.trim();
+    if (t.length < 8 || sBusy) { if (t.length < 8) { sOut.textContent = ''; sOut.appendChild(el('p', 'ms-warn', 'Décris ta situation en une phrase ou deux.')); } return; }
+    sBusy = true; sGo.disabled = true; sGo.textContent = '⏳ Je simule… (20 secondes)'; sOut.textContent = '';
+    const revenu = parseFloat(String(rev.value).replace(',', '.'));
+    try { if (revenu > 0) localStorage.setItem('elnoviaRevenu', String(revenu)); } catch (e) { /* ignoré */ }
+    const r = await call('life-simulate', { scenario: t, revenu: revenu > 0 ? revenu : null });
+    if (r.error) { sOut.textContent = ''; sOut.appendChild(el('p', 'ms-warn', '⚠️ ' + r.error)); }
+    else renderSim(r.result);
+    sGo.disabled = false; sGo.textContent = '🔮 Refaire une simulation'; sBusy = false;
+  });
+
+  anchor.after(mem);
+  mem.after(sim);
+})();
+</script>
  </body></html>
