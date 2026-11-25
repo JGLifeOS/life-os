@@ -8183,4 +8183,47 @@ function showAiActions(actions) {
   refresh();
 })();
 </script>
+                                                                                                   <script>
+// Mon compte : affiche l'adresse e-mail connectée et un bouton pour se déconnecter (onglet Plus)
+(function () {
+  if (document.getElementById('accountSection')) return;
+  const anchor = document.getElementById('faceIdSection') || document.getElementById('backupSection') ||
+    document.getElementById('pushSection') || [...document.querySelectorAll('section.card')].pop();
+  if (!anchor) return;
+
+  const card = document.createElement('section');
+  card.className = 'card'; card.id = 'accountSection';
+  const h = document.createElement('h2'); h.textContent = '👤 Mon compte';
+  const who = document.createElement('p'); who.className = 'muted'; who.textContent = 'Connecté.';
+  const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = 'Se déconnecter';
+  btn.style.cssText = 'background:#3a2433;color:#ffb4c4;';
+  const msg = document.createElement('p'); msg.className = 'muted';
+  card.append(h, who, btn, msg);
+  anchor.after(card);
+
+  async function refresh() {
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser();
+      who.textContent = user && user.email ? 'Connecté avec ' + user.email : 'Connecté.';
+    } catch (e) { /* ignoré */ }
+  }
+
+  btn.addEventListener('click', async () => {
+    if (!confirm('Te déconnecter d’ELNOVIA ?')) return;
+    btn.disabled = true; msg.textContent = 'Déconnexion…';
+    try {
+      const { error } = await supabaseClient.auth.signOut();
+      if (error) throw error;
+      location.reload();
+    } catch (e) {
+      console.error(e);
+      msg.textContent = 'Impossible de se déconnecter. Réessaie.';
+      btn.disabled = false;
+    }
+  });
+
+  refresh();
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(refresh, 300)); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
