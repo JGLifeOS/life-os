@@ -8066,7 +8066,7 @@ function showAiActions(actions) {
 })();
 </script>
   <script>
-// Bilan de vie v1 : l'IA lit toutes tes données, fait le point et propose des actions (suivi d'un bilan à l'autre)
+// Bilan de vie v2 : l'IA lit toutes tes données, fait le point et propose des actions (suivi d'un bilan à l'autre)
 (function () {
   if (document.getElementById('lifeReviewCard')) return;
   const anchor = document.getElementById('life-ai') || document.getElementById('todayCard') ||
@@ -8098,6 +8098,16 @@ function showAiActions(actions) {
     #lifeReviewCard .lr-act small{display:block;color:#8390b3;font-size:12px;margin-top:2px}
     #lifeReviewCard .lr-act button{white-space:nowrap;padding:7px 10px;font-size:13px}
     #lifeReviewCard .lr-follow{background:#0f1830;border:1px solid #243052;border-radius:12px;padding:10px;font-size:13px;margin-top:10px;color:#c9d2ee}
+    #lifeReviewCard details.lr-fix{margin:12px 0 4px;background:#0f1830;border:1px solid #243052;border-radius:12px;padding:8px 12px}
+    #lifeReviewCard details.lr-fix summary{cursor:pointer;font-size:14px;font-weight:600}
+    #lifeReviewCard .lr-fixhelp{color:#8390b3;font-size:12px;margin:8px 0}
+    #lifeReviewCard .lr-chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+    #lifeReviewCard .lr-chip{display:inline-flex;align-items:center;gap:6px;background:#1b2540;border-radius:999px;padding:4px 6px 4px 11px;font-size:13px}
+    #lifeReviewCard .lr-chip button{background:transparent;color:#8390b3;border:0;padding:0 5px;font-size:15px}
+    #lifeReviewCard .lr-fixrow{display:flex;gap:8px;margin-top:6px}
+    #lifeReviewCard .lr-fixrow input{flex:1;margin:0}
+    #lifeReviewCard .lr-fixrow button{white-space:nowrap}
+    #lifeReviewCard .lr-btns{display:flex;flex-direction:column;gap:6px}
     #lifeReviewCard .lr-date{color:#8390b3;font-size:12px;margin-top:10px}
   `;
   document.head.appendChild(st);
@@ -8123,13 +8133,83 @@ function showAiActions(actions) {
   go.className = 'lr-go';
   go.textContent = '✨ Faire mon bilan';
   const out = document.createElement('div');
-  card.append(h, intro, focus, go, out);
+  // --- Charges fixes (incompressibles) ---
+  const fix = document.createElement('details');
+  fix.className = 'lr-fix';
+  const fsum = document.createElement('summary');
+  fsum.textContent = '🔒 Mes charges fixes';
+  const fhelp = document.createElement('p');
+  fhelp.className = 'lr-fixhelp';
+  fhelp.textContent = 'Ce qui ne se réduit pas (énergie, loyer, assurance…). Écris le nom tel qu’il apparaît sur ta banque, par exemple TotalEnergies. ELNOVIA ne te proposera jamais de les réduire.';
+  const chips = document.createElement('div');
+  chips.className = 'lr-chips';
+  const frow = document.createElement('div');
+  frow.className = 'lr-fixrow';
+  const finput = document.createElement('input');
+  finput.type = 'text';
+  finput.maxLength = 60;
+  finput.placeholder = 'Nom de la charge';
+  const fadd = document.createElement('button');
+  fadd.type = 'button';
+  fadd.textContent = 'Ajouter';
+  frow.append(finput, fadd);
+  fix.append(fsum, fhelp, chips, frow);
+  card.append(h, intro, focus, go, fix, out);
   anchor.after(card);
 
   let busy = false;
 
   async function getUser() {
     try { const { data } = await supabaseClient.auth.getUser(); return data && data.user; } catch (e) { return null; }
+  }
+
+  async function loadFixed() {
+    try {
+      const { data, error } = await supabaseClient.from('fixed_charges').select('id, label').order('created_at');
+      if (error) return;
+      chips.textContent = '';
+      (data || []).forEach(f => {
+        const c = document.createElement('span');
+        c.className = 'lr-chip';
+        c.append(document.createTextNode(f.label));
+        const x = document.createElement('button');
+        x.type = 'button';
+        x.textContent = '✕';
+        x.setAttribute('aria-label', 'Retirer ' + f.label);
+        x.addEventListener('click', async () => {
+          await supabaseClient.from('fixed_charges').delete().eq('id', f.id);
+          loadFixed();
+        });
+        c.appendChild(x);
+        chips.appendChild(c);
+      });
+      fsum.textContent = '🔒 Mes charges fixes' + ((data || []).length ? ' (' + data.length + ')' : '');
+    } catch (e) { /* table pas encore créée */ }
+  }
+
+  async function addFixed() {
+    const v = finput.value.trim();
+    if (v.length < 2) return;
+    const user = await getUser();
+    if (!user) return;
+    fadd.disabled = true;
+    const { error } = await supabaseClient.from('fixed_charges').insert({ user_id: user.id, label: v.slice(0, 60) });
+    fadd.disabled = false;
+    if (error) { console.error(error); return; }
+    finput.value = '';
+    loadFixed();
+  }
+  fadd.addEventListener('click', addFixed);
+  finput.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); addFixed(); } });
+
+  async function applyBudget(user, a, btn) {
+    btn.disabled = true;
+    const { error } = await supabaseClient.from('budgets').upsert(
+      { user_id: user.id, category: a.budget_categorie, monthly_limit: Number(a.budget_plafond) },
+      { onConflict: 'user_id,category' }
+    );
+    if (error) { console.error(error); btn.disabled = false; btn.textContent = 'Erreur'; return; }
+    btn.textContent = '✓ Plafond fixé';
   }
 
   async function addTask(user, a, btn) {
@@ -8202,6 +8282,19 @@ function showAiActions(actions) {
         const s = document.createElement('small');
         s.textContent = a.pourquoi + (a.jours ? ' · dans ' + a.jours + ' j' : ' · aujourd’hui');
         txt.appendChild(s);
+        const btns = document.createElement('div');
+        btns.className = 'lr-btns';
+        if (a.budget_categorie && a.budget_plafond) {
+          const bb = document.createElement('button');
+          bb.type = 'button';
+          bb.textContent = '✅ Fixer ' + a.budget_plafond + ' €';
+          bb.addEventListener('click', async () => {
+            const user = await getUser();
+            if (!user) { bb.textContent = 'Connecte-toi'; return; }
+            applyBudget(user, a, bb);
+          });
+          btns.appendChild(bb);
+        }
         const b = document.createElement('button');
         b.type = 'button';
         b.textContent = '➕ Tâche';
@@ -8210,7 +8303,8 @@ function showAiActions(actions) {
           if (!user) { b.textContent = 'Connecte-toi'; return; }
           addTask(user, a, b);
         });
-        row.append(txt, b);
+        btns.appendChild(b);
+        row.append(txt, btns);
         out.appendChild(row);
       });
     }
@@ -8271,8 +8365,9 @@ function showAiActions(actions) {
     busy = false;
   });
 
-  loadLast();
-  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(loadLast, 600)); } catch (e) { /* ignoré */ }
+  function loadAll() { loadLast(); loadFixed(); }
+  loadAll();
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(loadAll, 600)); } catch (e) { /* ignoré */ }
 })();
 </script>
  </body></html>
