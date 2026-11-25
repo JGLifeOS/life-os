@@ -8799,7 +8799,7 @@ function showAiActions(actions) {
 })();
 </script>
   <script>
-// Foyer v1 : faire le point d'un espace partagé (qui a payé quoi, tâches, courses) et monter un projet commun
+// Foyer v2 (prénoms + responsables + répartition auto + nom Nova) : faire le point d'un espace partagé (qui a payé quoi, tâches, courses) et monter un projet commun
 (function () {
   if (document.getElementById('homeCard')) return;
   const anchor = document.getElementById('lifeScanCard') || document.getElementById('simCard') || document.getElementById('memoryCard') ||
@@ -8867,8 +8867,62 @@ function showAiActions(actions) {
   goProj.type = 'button';
   const outP = el('div');
   det.append(pIn, pBud, pLab, pDate, goProj, outP);
-  card.append(h, intro, sel, goBilan, outB, det);
+  const det2 = el('details');
+  det2.appendChild(el('summary', null, '👤 Prénoms & responsables'));
+  const namesBox = el('div');
+  const tasksBox = el('div');
+  const goSplit = el('button', 'hm-go', '✨ Répartir automatiquement les tâches sans responsable');
+  goSplit.type = 'button';
+  const outS = el('div');
+  det2.append(el('div', 'hm-small', 'Prénoms (visibles par tous les membres) :'), namesBox, el('h3', null, 'Qui fait quoi'), tasksBox, goSplit, outS);
+  card.append(h, intro, sel, goBilan, outB, det2, det);
   anchor.after(card);
+
+  let members = [];
+  const nameOf = id => { const m = members.find(x => x.id === id); return m ? m.name : ''; };
+  async function loadPeople() {
+    const sid = sel.value;
+    namesBox.textContent = ''; tasksBox.textContent = '';
+    if (!sid) return;
+    const me = await getUser();
+    const { data: mem } = await supabaseClient.from('space_members').select('user_id').eq('space_id', sid);
+    const { data: nm } = await supabaseClient.from('space_member_names').select('user_id, name').eq('space_id', sid);
+    const given = {}; (nm || []).forEach(x => { given[x.user_id] = x.name; });
+    const ids = Array.from(new Set((mem || []).map(x => x.user_id)));
+    members = ids.map((id, i) => ({ id, name: given[id] || (me && id === me.id ? 'Toi' : 'Membre ' + (i + 1)), given: given[id] || '' }));
+    members.forEach(m => {
+      const inp = el('input'); inp.maxLength = 30;
+      inp.placeholder = (me && m.id === me.id ? 'Ton prénom' : 'Prénom de ' + m.name);
+      inp.value = m.given;
+      inp.addEventListener('change', async () => {
+        const v = inp.value.trim().slice(0, 30);
+        if (!v) { await supabaseClient.from('space_member_names').delete().eq('space_id', sid).eq('user_id', m.id); }
+        else { const { error } = await supabaseClient.from('space_member_names').upsert({ space_id: sid, user_id: m.id, name: v }); if (error) { console.error(error); inp.placeholder = 'Erreur, réessaie'; return; } }
+        loadPeople();
+      });
+      namesBox.appendChild(inp);
+    });
+    const { data: tk } = await supabaseClient.from('tasks').select('id, title, status, assigned_to').eq('space_id', sid).neq('status', 'done').order('created_at', { ascending: false }).limit(40);
+    if (!(tk || []).length) tasksBox.appendChild(el('div', 'hm-small', 'Aucune tâche ouverte dans cet espace.'));
+    (tk || []).forEach(t => {
+      const row = el('div', 'hm-row');
+      row.appendChild(el('div', null, t.title));
+      const s2 = el('select'); s2.style.width = 'auto'; s2.style.margin = '0';
+      const o0 = el('option', null, '— personne'); o0.value = ''; s2.appendChild(o0);
+      members.forEach(m => { const o = el('option', null, m.name); o.value = m.id; s2.appendChild(o); });
+      s2.value = t.assigned_to || '';
+      s2.addEventListener('change', async () => {
+        const { error } = await supabaseClient.from('tasks').update({ assigned_to: s2.value || null }).eq('id', t.id);
+        if (error) { console.error(error); s2.value = t.assigned_to || ''; row.appendChild(el('small', 'hm-warn', 'Non modifiable (seul le créateur peut ?)')); }
+        else t.assigned_to = s2.value || null;
+      });
+      row.appendChild(s2);
+      tasksBox.appendChild(row);
+    });
+  }
+  det2.addEventListener('toggle', () => { if (det2.open) loadPeople(); });
+  sel.addEventListener('change', () => { outB.textContent = ''; outS.textContent = ''; if (det2.open) loadPeople(); });
+
 
   async function getUser() { try { const { data } = await supabaseClient.auth.getUser(); return data && data.user; } catch (e) { return null; } }
 
@@ -8881,7 +8935,7 @@ function showAiActions(actions) {
       (data || []).forEach(s => { const o = el('option', null, '👥 ' + s.name); o.value = s.id; sel.appendChild(o); });
       if (keep) sel.value = keep;
       const none = !(data || []).length;
-      goBilan.disabled = none; goProj.disabled = none;
+      goBilan.disabled = none; goProj.disabled = none; goSplit.disabled = none;
       if (none) { const o = el('option', null, 'Aucun espace partagé'); o.value = ''; sel.appendChild(o); }
       intro.textContent = none
         ? 'Crée d’abord un espace partagé (onglet Plus, carte Espaces) et invite ton foyer avec le code.'
@@ -8949,7 +9003,7 @@ function showAiActions(actions) {
         outB.appendChild(row);
       });
     }
-    outB.appendChild(el('div', 'hm-small', 'ELNOVIA ne connaît pas les prénoms : « Toi » c’est toi, les autres sont « Membre 2 », « Membre 3 »… Les dépenses sont attribuées à la personne qui les a saisies.'));
+    if (r.comptes.some(c => /^Membre \d/.test(c.membre))) outB.appendChild(el('div', 'hm-small', 'Astuce : renseigne les prénoms dans « 👤 Prénoms & responsables » pour que Nova parle de vous par vos prénoms.'));
   }
 
   function renderProjet(r, spaceId) {
@@ -8994,11 +9048,39 @@ function showAiActions(actions) {
     else if (isB) renderBilan(r.result, sel.value); else renderProjet(r.result, sel.value);
     btn.disabled = false; btn.textContent = label; busy = false;
   }
+  goSplit.addEventListener('click', async () => {
+    if (busy || !sel.value) return;
+    busy = true; goSplit.disabled = true; const lab = goSplit.textContent;
+    goSplit.textContent = '⏳ Je répartis… (20 secondes)'; outS.textContent = '';
+    const r = await call({ mode: 'repartir', space_id: sel.value });
+    if (r.error) outS.appendChild(el('p', 'hm-warn', '⚠️ ' + r.error));
+    else {
+      const aff = r.result.affectations || [];
+      outS.appendChild(el('div', 'hm-sum', r.result.resume));
+      let ok = 0;
+      for (const a of aff) {
+        const { error } = await supabaseClient.from('tasks').update({ assigned_to: a.pour_id }).eq('id', a.task_id);
+        if (!error) { ok++; outS.appendChild(el('div', 'hm-pt', a.titre + ' → ' + a.pour_nom)); }
+      }
+      if (aff.length && ok < aff.length) outS.appendChild(el('div', 'hm-warn', ok + '/' + aff.length + ' tâches affectées (les autres ne t’appartiennent pas).'));
+      loadPeople();
+    }
+    goSplit.disabled = false; goSplit.textContent = lab; busy = false;
+  });
   goBilan.addEventListener('click', () => run('bilan'));
   goProj.addEventListener('click', () => run('projet'));
 
   loadSpaces();
   try { supabaseClient.auth.onAuthStateChange(() => setTimeout(loadSpaces, 600)); } catch (e) { /* ignoré */ }
+  // Nom du copilote : Nova
+  try {
+    const nv = () => {
+      [['#memoryCard .ms-intro'], ['#simCard .ms-intro'], ['#lifeScanCard .ls-intro'], ['#lifeReviewCard .lr-intro']].forEach(([q]) => {
+        document.querySelectorAll(q).forEach(p => { if (!p.dataset.nova && /ELNOVIA/.test(p.textContent)) { p.textContent = p.textContent.replace(/ELNOVIA/g, 'Nova'); p.dataset.nova = '1'; } });
+      });
+    };
+    nv(); setTimeout(nv, 1500);
+  } catch (e) { /* ignoré */ }
 })();
 </script>
  </body></html>
