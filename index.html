@@ -10666,4 +10666,114 @@ function showAiActions(actions) {
   });
 })();
 </script>
+  <script>
+// Cuisine : menus de la semaine par Nova + liste de courses regroupée, envoyée dans « Courses »
+(function () {
+  if (document.getElementById('mealCard')) return;
+  const anchor = document.getElementById('autoCard') ||
+    [...document.querySelectorAll('section.card')].find(s => /elnovia ai/i.test(s.querySelector('h2')?.textContent || '') && !s.classList.contains('gradient'));
+  if (!anchor) return;
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const frDay = s => { const t = new Date(s + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'short' }); return t.charAt(0).toUpperCase() + t.slice(1); };
+  const KEY = 'elnoviaMenu';
+  const read = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } };
+  const write = v => { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) { /* ignoré */ } };
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #mealCard .ml-intro{color:#a9b3cf;font-size:13px;margin:0 0 10px}
+    #mealCard .ml-row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+    #mealCard .ml-row label{font-size:13px;color:#a9b3cf;flex:0 0 auto}
+    #mealCard select,#mealCard textarea{font:inherit;box-sizing:border-box}
+    #mealCard select{flex:1;min-width:0}
+    #mealCard textarea{display:block;width:100%;min-height:58px;resize:vertical;margin:0 0 8px}
+    #mealCard .ml-go{width:100%}
+    #mealCard .ml-warn{color:#ffcf9e;font-size:13px;margin:8px 0 0}
+    #mealCard .ml-advice{margin:12px 0 4px;padding:10px 12px;background:#12203f;border:1px solid #2d4175;border-radius:14px;font-size:14px}
+    #mealCard .ml-meal{padding:10px 0;border-top:1px solid #1f2945}
+    #mealCard .ml-meal>label{display:flex;gap:8px;align-items:flex-start;font-size:15px}
+    #mealCard .ml-meal input{margin-top:3px;width:auto;flex:0 0 auto}
+    #mealCard .ml-meal small{display:block;color:#8390b3;font-size:12px;margin-top:2px}
+    #mealCard .ml-ing{margin:6px 0 0 28px;color:#a9b3cf;font-size:13px}
+    #mealCard h3{font-size:14px;margin:16px 0 4px;color:#dfe5fa}
+    #mealCard .ml-shop{color:#c9d2ee;font-size:14px;line-height:1.5}
+    #mealCard .ml-btns{display:flex;gap:8px;margin-top:12px}
+    #mealCard .ml-btns button{flex:1;margin:0}
+    #mealCard .ml-sec{background:#1b2540 !important;color:#c9d2ee !important}
+  `;
+  document.head.appendChild(st);
+
+  const card = el('section', 'card'); card.id = 'mealCard';
+  const h = el('h2', null, '🍽️ Cuisine');
+  const hid = el('span', null, ' elnovia ai'); hid.style.display = 'none'; h.appendChild(hid);
+  const intro = el('p', 'ml-intro', 'Nova propose tes dîners de la semaine, avec la liste de courses prête à envoyer.');
+  const row1 = el('div', 'ml-row');
+  const selP = el('select'); for (let i = 1; i <= 8; i++) { const o = el('option', null, i + (i === 1 ? ' personne' : ' personnes')); o.value = i; if (i === 2) o.selected = true; selP.appendChild(o); }
+  const selJ = el('select'); [[3, '3 dîners'], [5, '5 dîners'], [7, '7 dîners']].forEach(([v, l]) => { const o = el('option', null, l); o.value = v; if (v === 5) o.selected = true; selJ.appendChild(o); });
+  row1.append(selP, selJ);
+  const ta = el('textarea'); ta.maxLength = 280; ta.placeholder = 'Envies, régime, allergies, ce que tu as déjà… (facultatif)';
+  const go = el('button', 'ml-go', '✨ Proposer mes menus'); go.type = 'button';
+  const out = el('div');
+  card.append(h, intro, row1, ta, go, out);
+  anchor.after(card);
+
+  function show(r) {
+    out.textContent = '';
+    if (r.astuce) out.appendChild(el('div', 'ml-advice', '🧭 ' + r.astuce));
+    const checks = [];
+    r.repas.forEach(m => {
+      const box = el('div', 'ml-meal'); const lab = el('label'); const cb = el('input'); cb.type = 'checkbox'; cb.checked = true;
+      const tx = el('div', null, m.nom); tx.appendChild(el('small', null, frDay(m.date) + ' · ' + m.minutes + ' min'));
+      lab.append(cb, tx); box.appendChild(lab);
+      box.appendChild(el('div', 'ml-ing', m.ingredients.map(g => g.quantite ? g.quantite + ' ' + g.nom : g.nom).join(' · ')));
+      out.appendChild(box); checks.push([cb, m]);
+    });
+    const shopTitle = el('h3', null, '🛒 Liste de courses'); const shop = el('div', 'ml-shop');
+    const msg = el('p', 'ml-intro'); const btns = el('div', 'ml-btns');
+    const add = el('button', null, 'Ajouter aux courses'); add.type = 'button';
+    const again = el('button', 'ml-sec', 'Autres idées'); again.type = 'button';
+    function grouped() {
+      const map = new Map();
+      checks.filter(c => c[0].checked).forEach(([, m]) => m.ingredients.forEach(g => {
+        const k = g.nom.toLowerCase(); const e = map.get(k) || { nom: g.nom, q: [] }; if (g.quantite) e.q.push(g.quantite); map.set(k, e);
+      }));
+      return [...map.values()].map(e => (e.nom.charAt(0).toUpperCase() + e.nom.slice(1)) + (e.q.length ? ' — ' + e.q.join(' + ') : ''));
+    }
+    function paint() { const l = grouped(); shop.textContent = l.length ? l.join(' · ') : 'Aucun repas sélectionné.'; add.disabled = !l.length; }
+    checks.forEach(([cb]) => cb.addEventListener('change', paint));
+    add.addEventListener('click', async () => {
+      const l = grouped(); if (!l.length) return; add.disabled = true;
+      try {
+        const { data: { user } } = await supabaseClient.auth.getUser(); if (!user) { add.textContent = 'Connecte-toi'; return; }
+        const { error } = await supabaseClient.from('shopping_items').insert(l.map(label => ({ user_id: user.id, space_id: null, label: label.slice(0, 120) })));
+        if (error) throw error;
+        msg.textContent = '✅ ' + l.length + ' article(s) ajouté(s) à ta liste de courses.'; add.textContent = '✓ Ajouté';
+      } catch (e) { console.error(e); add.disabled = false; msg.textContent = '⚠️ Impossible d’ajouter aux courses.'; }
+    });
+    again.addEventListener('click', () => go.click());
+    btns.append(add, again);
+    out.append(shopTitle, shop, msg, btns); paint();
+  }
+
+  let busy = false;
+  go.addEventListener('click', async () => {
+    if (busy) return; busy = true; go.disabled = true; const label = go.textContent; go.textContent = '⏳ Nova compose tes menus…'; out.textContent = '';
+    try {
+      const { data, error } = await supabaseClient.functions.invoke('life-meals', { body: { personnes: Number(selP.value), jours: Number(selJ.value), envies: ta.value.trim() } });
+      if (error || !data || !data.result) {
+        let m = (data && data.error) || '';
+        try { if (!m && error && error.context) m = (await error.context.json()).error || ''; } catch (e) { /* ignoré */ }
+        out.appendChild(el('p', 'ml-warn', '⚠️ ' + (m || 'Je n’ai pas pu préparer tes menus. Réessaie.')));
+      } else { write(data.result); show(data.result); }
+    } catch (e) { console.error(e); out.appendChild(el('p', 'ml-warn', '⚠️ Problème de connexion.')); }
+    go.disabled = false; go.textContent = label; busy = false;
+  });
+
+  const saved = read();
+  if (saved && Array.isArray(saved.repas) && saved.repas.length) {
+    const today = new Date().toLocaleDateString('fr-CA');
+    if (saved.repas.some(m => m.date >= today)) { saved.repas = saved.repas.filter(m => m.date >= today); try { show(saved); } catch (e) { /* ignoré */ } }
+  }
+})();
+</script>
  </body></html>
