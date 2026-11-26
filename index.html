@@ -9528,4 +9528,148 @@ function showAiActions(actions) {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
 })();
 </script>
+                    <script>
+// Nova a quelque chose à te dire v1 : 1 à 3 suggestions sur l'accueil, avec un bouton d'action ; tu choisis ce que Nova surveille
+(function () {
+  if (document.getElementById('novaSays')) return;
+  const app = document.getElementById('appContent');
+  if (!app) return;
+  const main = app.querySelector('main');
+  if (!main) return;
+
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const eur = n => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 }) + ' €';
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* ignoré */ } }
+  };
+  const WATCH = [
+    ['late', 'Tâches en retard'], ['renew', 'Échéances à renouveler'], ['budget', 'Budgets dépassés'],
+    ['undated', 'Tâches sans date'], ['goal', 'Objectifs d’épargne']
+  ];
+  const watch = () => Object.assign({ late: true, renew: true, budget: true, undated: true, goal: true }, store.get('elnoviaWatch', {}));
+  const today = ymd(new Date());
+  const dismissed = () => { const d = store.get('elnoviaDismiss', {}); return d.day === today ? d.keys || [] : []; };
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #novaSays{display:none}
+    body.eln-home #novaSays{display:block}
+    #novaSays .ns-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+    #novaSays h2{margin:0}
+    #novaSays .ns-cog{background:none;border:0;color:#8390b3;font-size:18px;width:auto;margin:0;padding:4px}
+    #novaSays .ns-item{display:flex;gap:10px;align-items:center;padding:12px 0;border-top:1px solid #1f2945;margin-top:10px}
+    #novaSays .ns-item:first-of-type{margin-top:8px}
+    #novaSays .ns-ico{font-size:22px}
+    #novaSays .ns-txt{flex:1;min-width:0;font-size:15px;line-height:1.35}
+    #novaSays .ns-txt small{display:block;color:#8390b3;font-size:12px;margin-top:2px}
+    #novaSays .ns-btn{width:auto;margin:0;padding:8px 12px;font-size:13px;white-space:nowrap}
+    #novaSays .ns-x{background:none;border:0;color:#6b7799;font-size:16px;width:auto;margin:0;padding:6px}
+    #novaSays .ns-ok{color:#a9b3cf;font-size:14px;margin:10px 0 2px}
+    #novaSays .ns-set{margin-top:10px;padding:10px 12px;background:#0f1830;border:1px solid #243052;border-radius:12px;font-size:14px}
+    #novaSays .ns-set label{display:flex;gap:8px;align-items:center;padding:5px 0}
+    #novaSays .ns-set input{width:auto;margin:0}
+  `;
+  document.head.appendChild(st);
+
+  const box = el('div', 'card'); box.id = 'novaSays';
+  const head = el('div', 'ns-head');
+  const h = el('h2', null, '✦ Nova a quelque chose à te dire');
+  const cog = el('button', 'ns-cog', '⚙️'); cog.type = 'button'; cog.title = 'Choisir ce que Nova surveille';
+  head.append(h, cog);
+  const list = el('div');
+  const set = el('div', 'ns-set'); set.style.display = 'none';
+  set.appendChild(el('div', null, 'Nova surveille :'));
+  const w = watch();
+  WATCH.forEach(([k, label]) => {
+    const l = el('label'); const c = el('input'); c.type = 'checkbox'; c.checked = !!w[k];
+    c.addEventListener('change', () => { const cur = watch(); cur[k] = c.checked; store.set('elnoviaWatch', cur); load(); });
+    l.append(c, document.createTextNode(label)); set.appendChild(l);
+  });
+  box.append(head, list, set);
+  cog.addEventListener('click', () => { set.style.display = set.style.display === 'none' ? 'block' : 'none'; });
+
+  function place() {
+    if (box.isConnected) return;
+    const q = document.getElementById('simpleQuick');
+    if (q) q.after(box); else main.prepend(box);
+  }
+  function goTab(id) { const b = document.querySelector('#elnTabs button[data-tab="' + id + '"]'); if (b) b.click(); window.scrollTo(0, 0); }
+
+  function dismiss(key) { const d = dismissed(); d.push(key); store.set('elnoviaDismiss', { day: today, keys: d }); load(); }
+
+  function item(s) {
+    const it = el('div', 'ns-item');
+    const t = el('div', 'ns-txt', s.text); if (s.sub) t.appendChild(el('small', null, s.sub));
+    const b = el('button', 'ns-btn', s.btn); b.type = 'button';
+    b.addEventListener('click', async () => { b.disabled = true; try { await s.run(b); } catch (e) { console.error(e); b.textContent = 'Erreur'; b.disabled = false; } });
+    const x = el('button', 'ns-x', '✕'); x.type = 'button'; x.title = 'Masquer pour aujourd’hui';
+    x.addEventListener('click', () => dismiss(s.key));
+    it.append(el('span', 'ns-ico', s.ico), t, b, x);
+    return it;
+  }
+
+  let busy = false;
+  async function load() {
+    if (busy) return; busy = true;
+    try {
+      place();
+      const { data: ud } = await supabaseClient.auth.getUser();
+      if (!ud || !ud.user) return;
+      const now = new Date();
+      const m1 = new Date(now.getFullYear(), now.getMonth(), 1), m2 = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      const [tk, bd, ex, gl] = await Promise.all([
+        supabaseClient.from('tasks').select('id, title, status, due_date, recurrence').limit(1000),
+        supabaseClient.from('budgets').select('category, monthly_limit'),
+        supabaseClient.from('expenses').select('amount, category').is('space_id', null).gte('spent_on', ymd(m1)).lt('spent_on', ymd(m2)).limit(2000),
+        supabaseClient.from('savings_goals').select('label, target, saved, deadline')
+      ]);
+      const tasks = tk.data || [], budgets = bd.data || [], exps = ex.data || [], goals = gl.data || [];
+      const W = watch(), hide = dismissed();
+      const day = t => String(t.due_date || '').slice(0, 10);
+      const open = tasks.filter(t => t.status !== 'done');
+      const sugg = [];
+
+      const late = open.filter(t => t.due_date && day(t) < today);
+      if (W.late && late.length) {
+        sugg.push({ key: 'late', ico: '⏰', text: late.length + ' tâche' + (late.length > 1 ? 's' : '') + ' en retard.', sub: late.slice(0, 2).map(t => t.title).join(' · '),
+          btn: 'Reporter à demain', run: async b => {
+            const d = new Date(); d.setDate(d.getDate() + 1);
+            const { error } = await supabaseClient.from('tasks').update({ due_date: ymd(d) + 'T12:00:00' }).in('id', late.map(t => t.id));
+            if (error) throw error;
+            b.textContent = '✓ Reporté'; try { if (typeof window.loadTasks === 'function') window.loadTasks(); } catch (e) { /* ignoré */ }
+            setTimeout(load, 900);
+          } });
+      }
+      if (W.renew) open.filter(t => /^renouveler/i.test(t.title || '') && t.due_date).sort((a, b) => day(a).localeCompare(day(b))).slice(0, 1).forEach(t => {
+        const days = Math.round((new Date(day(t) + 'T12:00:00') - now) / 864e5);
+        if (days <= 45) sugg.push({ key: 'renew-' + t.id, ico: '📄', text: String(t.title).replace(/^renouveler\s*:?\s*/i, 'À renouveler : ') + (days >= 0 ? ' (dans ' + days + ' jours).' : ' (échéance dépassée).'), btn: 'Voir mes tâches', run: async () => goTab('tasks') });
+      });
+      if (W.budget) {
+        const spent = {}; exps.forEach(x => { const c = x.category || 'Autre'; spent[c] = (spent[c] || 0) + Number(x.amount || 0); });
+        budgets.map(b => ({ c: b.category, s: spent[b.category] || 0, l: Number(b.monthly_limit) })).filter(b => b.s >= b.l).sort((a, b) => (b.s - b.l) - (a.s - a.l)).slice(0, 1)
+          .forEach(b => sugg.push({ key: 'budget-' + b.c, ico: '💶', text: 'Budget ' + b.c.toLowerCase() + ' dépassé de ' + eur(b.s - b.l) + ' ce mois-ci.', btn: 'Voir mon budget', run: async () => goTab('money') }));
+      }
+      const undated = open.filter(t => !t.due_date);
+      if (W.undated && undated.length) sugg.push({ key: 'undated', ico: '🗓️', text: undated.length + ' tâche' + (undated.length > 1 ? 's' : '') + ' sans date.', sub: undated.slice(0, 2).map(t => t.title).join(' · '), btn: 'Les planifier', run: async () => goTab('tasks') });
+      if (W.goal) goals.filter(g => g.deadline && g.saved < g.target).forEach(g => {
+        const months = Math.max(1, Math.ceil((new Date(g.deadline + 'T12:00:00') - now) / (30.4 * 864e5)));
+        sugg.push({ key: 'goal-' + g.label, ico: '🎯', text: g.label + ' : ' + eur((g.target - g.saved) / months) + ' à mettre de côté par mois pour tenir ta date.', btn: 'Voir l’objectif', run: async () => goTab('money') });
+      });
+
+      const shown = sugg.filter(s => !hide.includes(s.key)).slice(0, 3);
+      list.textContent = '';
+      if (!shown.length) list.appendChild(el('div', 'ns-ok', 'Rien d’urgent pour le moment. Profite de ta journée ! 👌'));
+      shown.forEach(s => list.appendChild(item(s)));
+    } catch (e) { console.error(e); } finally { busy = false; }
+  }
+
+  load();
+  setTimeout(load, 1200);
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 800)); } catch (e) { /* ignoré */ }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+})();
+</script>
  </body></html>
