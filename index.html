@@ -6787,8 +6787,8 @@ function showAiActions(actions) {
   scan();
 })();
 </script>
-  <script>
-// Candidatures v1 : suivi des candidatures (entreprise, poste, statut, relance)
+<script>
+// Candidatures v2 : comment tu as contacté (mail, appel…), délai de relance réglable, bouton « Je viens de relancer »
 (function () {
   if (document.getElementById('jobsSection')) return;
   const anchor = document.getElementById('backupSection') || document.getElementById('pushSection') ||
@@ -6799,55 +6799,69 @@ function showAiActions(actions) {
     ['envoyee', '📨 Envoyée'], ['relancee', '🔁 Relancée'], ['entretien', '🗣 Entretien'],
     ['offre', '🎉 Offre'], ['refus', '❌ Refus']
   ];
+  const CHANNEL = [
+    ['mail', '📧 Par mail'], ['appel', '📞 Par téléphone'], ['en_ligne', '🌐 En ligne (site, annonce)'],
+    ['en_personne', '🤝 En personne'], ['courrier', '✉️ Par courrier']
+  ];
+  const CH_SHORT = { mail: '📧 mail', appel: '📞 appel', en_ligne: '🌐 en ligne', en_personne: '🤝 en personne', courrier: '✉️ courrier' };
+  const DELAYS = [[3, '3 jours'], [5, '5 jours'], [7, '7 jours'], [10, '10 jours'], [14, '2 semaines'], [21, '3 semaines'], [0, 'Pas de relance']];
   const pad = n => String(n).padStart(2, '0');
   const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
   const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-  const daysAgo = s => Math.max(0, Math.round((new Date(ymd(new Date()) + 'T12:00:00') - new Date(String(s).slice(0, 10) + 'T12:00:00')) / 86400000));
+  const parse = s => new Date(String(s).slice(0, 10) + 'T12:00:00');
+  const daysAgo = s => Math.max(0, Math.round((parse(ymd(new Date())) - parse(s)) / 86400000));
+  const frDay = s => parse(s).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const select = (opts, value) => { const s = el('select'); opts.forEach(([v, l]) => { const o = el('option', null, l); o.value = v; if (String(v) === String(value)) o.selected = true; s.appendChild(o); }); return s; };
 
   const st = document.createElement('style');
   st.textContent = `
     #jobsSection .j-stats{color:#a9b3cf;font-size:13px;margin:0 0 10px}
-    #jobsSection details{margin:8px 0 12px}
+    #jobsSection details.j-add{margin:8px 0 12px}
     #jobsSection summary{cursor:pointer;font-weight:600;padding:6px 0}
-    #jobsSection form input{display:block;width:100%;box-sizing:border-box;margin:6px 0}
+    #jobsSection form input,#jobsSection form select{display:block;width:100%;box-sizing:border-box;margin:6px 0}
+    #jobsSection form label{display:block;font-size:13px;color:#a9b3cf;margin-top:8px}
     #jobsSection .j-row{padding:10px 0;border-top:1px solid #1f2945}
-    #jobsSection .j-top{display:flex;align-items:center;gap:8px}
+    #jobsSection .j-top{display:flex;align-items:center;gap:8px;cursor:pointer}
     #jobsSection .j-name{flex:1;min-width:0}
     #jobsSection .j-name b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #jobsSection .j-name small{color:#8390b3;font-size:12px}
     #jobsSection .j-flag{display:inline-block;background:#4a2b12;color:#ffcf9e;border-radius:8px;padding:1px 7px;font-size:12px;margin-left:6px}
-    #jobsSection .j-row select{background:#0b1224;color:#f7f8ff;border:1px solid #35415e;border-radius:10px;padding:6px 8px;font-size:13px;max-width:140px}
-    #jobsSection .j-x{background:transparent;color:#8390b3;border:0;padding:4px 8px;font-size:16px}
+    #jobsSection select{background:#0b1224;color:#f7f8ff;border:1px solid #35415e;border-radius:10px;padding:6px 8px;font-size:13px}
+    #jobsSection .j-top select{max-width:130px}
+    #jobsSection .j-x{background:transparent;color:#8390b3;border:0;padding:4px 8px;font-size:16px;width:auto;margin:0}
     #jobsSection .j-link{font-size:12px;color:#c4b5ff}
+    #jobsSection .j-panel{margin-top:10px;padding:10px 12px;background:#0f1830;border:1px solid #243052;border-radius:12px;font-size:14px}
+    #jobsSection .j-panel label{display:block;font-size:12px;color:#8390b3;margin:8px 0 3px}
+    #jobsSection .j-panel select{width:100%;box-sizing:border-box;font-size:14px;padding:8px}
+    #jobsSection .j-next{margin:10px 0 2px;color:#dfe5fa;font-size:13px}
+    #jobsSection .j-panel button.j-relance{width:100%;margin-top:10px}
   `;
   document.head.appendChild(st);
 
-  const card = document.createElement('section');
-  card.className = 'card';
-  card.id = 'jobsSection';
-  const h = document.createElement('h2');
-  h.textContent = '💼 Candidatures';
-  const stats = document.createElement('p'); stats.className = 'j-stats';
-  const det = document.createElement('details');
-  const sum = document.createElement('summary'); sum.textContent = '＋ Ajouter une candidature';
-  const form = document.createElement('form');
-  const mk = (ph, type, req) => { const i = document.createElement('input'); i.type = type || 'text'; i.placeholder = ph; i.required = !!req; i.maxLength = 160; return i; };
+  const card = el('section', 'card'); card.id = 'jobsSection';
+  const h = el('h2', null, '💼 Candidatures');
+  const stats = el('p', 'j-stats');
+  const det = el('details', 'j-add');
+  det.appendChild(el('summary', null, '＋ Ajouter une candidature'));
+  const form = el('form');
+  const mk = (ph, type, req) => { const i = el('input'); i.type = type || 'text'; i.placeholder = ph; i.required = !!req; i.maxLength = 160; return i; };
   const company = mk('Entreprise', 'text', true);
   const position = mk('Poste (ex : technicien frigoriste)');
   const link = mk('Lien de l’annonce (facultatif)', 'url');
-  const remindLabel = document.createElement('label');
-  const remindCb = document.createElement('input'); remindCb.type = 'checkbox'; remindCb.checked = true;
-  remindCb.style.cssText = 'display:inline-block;width:auto;margin:6px 6px 6px 0';
-  remindLabel.append(remindCb, 'Me rappeler de relancer dans 7 jours');
-  const addBtn = document.createElement('button'); addBtn.type = 'submit'; addBtn.textContent = 'Ajouter';
-  const msg = document.createElement('p'); msg.className = 'muted';
-  form.append(company, position, link, remindLabel, addBtn, msg);
-  det.append(sum, form);
-  const list = document.createElement('div');
+  const chSel = select(CHANNEL, 'en_ligne');
+  const dlSel = select(DELAYS, 7);
+  const addBtn = el('button', null, 'Ajouter'); addBtn.type = 'submit';
+  const msg = el('p', 'muted');
+  const l1 = el('label', null, 'Comment as-tu contacté l’entreprise ?'), l2 = el('label', null, 'Me rappeler de relancer dans :');
+  form.append(company, position, link, l1, chSel, l2, dlSel, addBtn, msg);
+  det.appendChild(form);
+  const list = el('div');
   card.append(h, stats, det, list);
   anchor.after(card);
 
   let apps = [];
+  const openId = {};
 
   async function getUser() { const { data: { user } } = await supabaseClient.auth.getUser(); return user; }
 
@@ -6855,59 +6869,87 @@ function showAiActions(actions) {
     try {
       const user = await getUser();
       if (!user) return;
-      const { data, error } = await supabaseClient.from('job_applications').select('*')
-        .order('created_at', { ascending: false }).limit(500);
-      if (error) {
-        console.error(error);
-        list.textContent = 'La table des candidatures n’est pas encore créée (étape Supabase).';
-        return;
-      }
+      const { data, error } = await supabaseClient.from('job_applications').select('*').order('created_at', { ascending: false }).limit(500);
+      if (error) { console.error(error); list.textContent = 'La table des candidatures n’est pas prête (étape Supabase).'; return; }
       apps = data || [];
       render();
     } catch (e) { console.error(e); }
   }
 
-  async function createRelanceTask(user, a, dayStr) {
-    const remind = new Date(dayStr + 'T09:00:00');
-    const row = {
-      user_id: user.id, title: ('Relancer : ' + a.company).slice(0, 120), status: 'todo', category: 'Travail',
-      priority: 'medium', due_date: dayStr + 'T12:00:00'
-    };
-    if (remind > new Date()) row.remind_at = remind.toISOString();
-    const { error } = await supabaseClient.from('tasks').insert(row);
-    if (error) console.error(error);
+  // Tâche « Relancer : entreprise » : créée, déplacée ou supprimée selon le délai choisi
+  async function syncTask(user, a, dayStr) {
+    const title = ('Relancer : ' + a.company).slice(0, 120);
+    try {
+      const { data: ex } = await supabaseClient.from('tasks').select('id').eq('title', title).neq('status', 'done').limit(5);
+      const ids = (ex || []).map(t => t.id);
+      if (!dayStr) { if (ids.length) await supabaseClient.from('tasks').delete().in('id', ids); return; }
+      const remind = new Date(dayStr + 'T09:00:00');
+      const row = { due_date: dayStr + 'T12:00:00', remind_at: remind > new Date() ? remind.toISOString() : null };
+      if (ids.length) { await supabaseClient.from('tasks').update(row).in('id', ids); return; }
+      await supabaseClient.from('tasks').insert(Object.assign({ user_id: user.id, title, status: 'todo', category: 'Travail', priority: 'medium' }, row));
+    } catch (e) { console.error(e); }
+    try { if (typeof window.loadTasks === 'function') window.loadTasks(); } catch (e) { /* ignoré */ }
   }
+
+  const nextDay = (last, days) => (days > 0 ? ymd(addDays(parse(last), days)) : null);
 
   form.addEventListener('submit', async ev => {
     ev.preventDefault();
     msg.textContent = '';
     const user = await getUser();
     if (!user) { msg.textContent = 'Connecte-toi d’abord.'; return; }
-    const followDay = ymd(addDays(new Date(), 7));
+    const days = Number(dlSel.value), today = ymd(new Date());
     const row = {
       user_id: user.id, company: company.value.trim(), position: position.value.trim() || null,
-      url: link.value.trim() || null, status: 'envoyee', applied_on: ymd(new Date()),
-      follow_up_on: remindCb.checked ? followDay : null
+      url: link.value.trim() || null, status: 'envoyee', applied_on: today, last_contact_on: today,
+      channel: chSel.value, relance_days: days || null, follow_up_on: nextDay(today, days)
     };
     if (!row.company) return;
     const { error } = await supabaseClient.from('job_applications').insert(row);
-    if (error) { console.error(error); msg.textContent = 'Impossible d’ajouter (la table existe-t-elle ?).'; return; }
-    if (remindCb.checked) await createRelanceTask(user, row, followDay);
+    if (error) { console.error(error); msg.textContent = 'Impossible d’ajouter (la table est-elle à jour ?).'; return; }
+    if (row.follow_up_on) await syncTask(user, row, row.follow_up_on);
     company.value = position.value = link.value = '';
     det.open = false;
     load();
   });
 
+  async function patch(a, p) {
+    const { error } = await supabaseClient.from('job_applications').update(p).eq('id', a.id);
+    if (error) { console.error(error); return false; }
+    return true;
+  }
+
   async function setStatus(a, value) {
-    const patch = { status: value };
-    if (value === 'relancee') patch.follow_up_on = ymd(addDays(new Date(), 7));
-    if (['entretien', 'offre', 'refus'].includes(value)) patch.follow_up_on = null;
-    const { error } = await supabaseClient.from('job_applications').update(patch).eq('id', a.id);
-    if (error) { console.error(error); return; }
-    if (value === 'relancee') {
-      const user = await getUser();
-      if (user) await createRelanceTask(user, a, patch.follow_up_on);
-    }
+    const p = { status: value };
+    const today = ymd(new Date());
+    const days = a.relance_days == null ? 7 : a.relance_days;
+    if (value === 'relancee') { p.last_contact_on = today; p.follow_up_on = nextDay(today, days); }
+    if (['entretien', 'offre', 'refus'].includes(value)) p.follow_up_on = null;
+    if (value === 'envoyee' && !a.follow_up_on) p.follow_up_on = nextDay(a.last_contact_on || a.applied_on, days);
+    if (!(await patch(a, p))) return;
+    const user = await getUser();
+    if (user) await syncTask(user, a, p.follow_up_on === undefined ? a.follow_up_on : p.follow_up_on);
+    load();
+  }
+
+  async function changeDelay(a, days) {
+    const last = a.last_contact_on || a.applied_on;
+    const p = { relance_days: days || null, follow_up_on: ['envoyee', 'relancee'].includes(a.status) ? nextDay(last, days) : null };
+    if (!(await patch(a, p))) return;
+    const user = await getUser();
+    if (user) await syncTask(user, a, p.follow_up_on);
+    load();
+  }
+
+  async function changeChannel(a, value) { if (await patch(a, { channel: value })) load(); }
+
+  async function justRelanced(a, channel) {
+    const today = ymd(new Date());
+    const days = a.relance_days == null ? 7 : a.relance_days;
+    const p = { status: 'relancee', channel, last_contact_on: today, follow_up_on: nextDay(today, days) };
+    if (!(await patch(a, p))) return;
+    const user = await getUser();
+    if (user) await syncTask(user, a, p.follow_up_on);
     load();
   }
 
@@ -6915,6 +6957,7 @@ function showAiActions(actions) {
     if (!confirm('Supprimer la candidature « ' + a.company + ' » ?')) return;
     const { error } = await supabaseClient.from('job_applications').delete().eq('id', a.id);
     if (error) { console.error(error); return; }
+    const user = await getUser(); if (user) await syncTask(user, a, null);
     load();
   }
 
@@ -6926,39 +6969,53 @@ function showAiActions(actions) {
       : 'Aucune candidature pour l’instant.';
     const today = ymd(new Date());
     const order = { entretien: 0, offre: 1, relancee: 2, envoyee: 3, refus: 4 };
-    [...apps].sort((a, b) => (order[a.status] - order[b.status]) || String(b.applied_on).localeCompare(String(a.applied_on)))
-      .forEach(a => {
-        const row = document.createElement('div'); row.className = 'j-row';
-        const top = document.createElement('div'); top.className = 'j-top';
-        const name = document.createElement('div'); name.className = 'j-name';
-        const b = document.createElement('b'); b.textContent = a.company;
-        const d = daysAgo(a.applied_on);
-        const sm = document.createElement('small');
-        sm.textContent = (a.position ? a.position + ' · ' : '') + (d === 0 ? 'aujourd’hui' : 'il y a ' + d + ' j');
-        if (a.follow_up_on && a.follow_up_on <= today && ['envoyee', 'relancee'].includes(a.status)) {
-          const f = document.createElement('span'); f.className = 'j-flag'; f.textContent = 'À relancer'; sm.appendChild(f);
-        }
-        name.append(b, sm);
-        const sel = document.createElement('select');
-        STATUS.forEach(([v, l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; if (v === a.status) o.selected = true; sel.appendChild(o); });
-        sel.addEventListener('change', () => setStatus(a, sel.value));
-        const x = document.createElement('button'); x.type = 'button'; x.className = 'j-x'; x.textContent = '✕';
-        x.addEventListener('click', () => remove(a));
-        top.append(name, sel, x);
-        row.appendChild(top);
-        if (a.url && /^https?:\/\//i.test(a.url)) {
-          const lk = document.createElement('a'); lk.className = 'j-link'; lk.href = a.url; lk.target = '_blank'; lk.rel = 'noopener';
-          lk.textContent = 'Voir l’annonce'; row.appendChild(lk);
-        }
-        list.appendChild(row);
-      });
+    [...apps].sort((a, b) => (order[a.status] - order[b.status]) || String(b.applied_on).localeCompare(String(a.applied_on))).forEach(a => {
+      const row = el('div', 'j-row');
+      const top = el('div', 'j-top');
+      const name = el('div', 'j-name');
+      const last = a.last_contact_on || a.applied_on, d = daysAgo(last);
+      const sm = el('small', null, (a.position ? a.position + ' · ' : '') + (a.channel ? CH_SHORT[a.channel] + ' · ' : '') + (d === 0 ? 'aujourd’hui' : 'il y a ' + d + ' j'));
+      if (a.follow_up_on && a.follow_up_on <= today && ['envoyee', 'relancee'].includes(a.status)) sm.appendChild(el('span', 'j-flag', 'À relancer'));
+      name.append(el('b', null, a.company), sm);
+      const sel = select(STATUS, a.status);
+      sel.addEventListener('click', e => e.stopPropagation());
+      sel.addEventListener('change', () => setStatus(a, sel.value));
+      const x = el('button', 'j-x', '✕'); x.type = 'button';
+      x.addEventListener('click', e => { e.stopPropagation(); remove(a); });
+      top.append(name, sel, x);
+      row.appendChild(top);
+
+      const panel = el('div', 'j-panel'); panel.style.display = openId[a.id] ? 'block' : 'none';
+      panel.appendChild(el('label', null, 'Dernier contact'));
+      const pc = select(CHANNEL, a.channel || 'en_ligne');
+      pc.addEventListener('change', () => changeChannel(a, pc.value));
+      panel.appendChild(pc);
+      panel.appendChild(el('label', null, 'Relancer au bout de'));
+      const pd = select(DELAYS, a.relance_days == null ? 7 : a.relance_days);
+      pd.addEventListener('change', () => changeDelay(a, Number(pd.value)));
+      panel.appendChild(pd);
+      const nx = a.follow_up_on && ['envoyee', 'relancee'].includes(a.status) ? 'Prochaine relance : ' + frDay(a.follow_up_on) + (a.follow_up_on <= today ? ' (maintenant)' : '') : 'Pas de relance prévue.';
+      panel.appendChild(el('div', 'j-next', nx));
+      if (['envoyee', 'relancee'].includes(a.status)) {
+        const rb = el('button', 'j-relance', '🔁 Je viens de relancer'); rb.type = 'button';
+        rb.addEventListener('click', () => justRelanced(a, pc.value));
+        panel.appendChild(rb);
+      }
+      if (a.url && /^https?:\/\//i.test(a.url)) {
+        const lk = el('a', 'j-link', 'Voir l’annonce'); lk.href = a.url; lk.target = '_blank'; lk.rel = 'noopener';
+        panel.appendChild(lk);
+      }
+      row.appendChild(panel);
+      top.addEventListener('click', () => { openId[a.id] = !openId[a.id]; panel.style.display = openId[a.id] ? 'block' : 'none'; });
+      list.appendChild(row);
+    });
   }
 
   load();
   try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 500)); } catch (e) { /* ignoré */ }
 })();
 </script>
- <script>
+  <script>
 // Bilan du mois : touche une catégorie pour voir toutes ses dépenses
 (function () {
   const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
