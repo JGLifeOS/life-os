@@ -9410,4 +9410,122 @@ function showAiActions(actions) {
   try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 600)); } catch (e) { /* ignoré */ }
 })();
 </script>
+                                                                 <script>
+// Nova Insights v1 : le bilan factuel de la semaine (sans note sur 100)
+(function () {
+  if (document.getElementById('insightsCard')) return;
+  const anchor = document.getElementById('lifeReviewCard');
+  const sections = [...document.querySelectorAll('section.card')];
+  const target = anchor || sections.find(s => /elnovia ai/i.test(s.querySelector('h2')?.textContent || '') && !s.classList.contains('gradient'));
+  if (!target) return;
+
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const eur = n => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 }) + ' €';
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #lifeReviewCard .lr-ring{display:none !important}
+    #lrCurve{display:none !important}
+    #insightsCard .in-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+    #insightsCard .in-when{color:#8390b3;font-size:13px}
+    #insightsCard .in-row{margin:14px 0 0}
+    #insightsCard .in-top{display:flex;justify-content:space-between;gap:8px;font-size:15px;font-weight:600}
+    #insightsCard .in-bar{height:10px;background:#1b2540;border-radius:999px;overflow:hidden;margin:7px 0 5px}
+    #insightsCard .in-bar i{display:block;height:100%;border-radius:999px}
+    #insightsCard .in-sub{color:#8390b3;font-size:13px}
+    #insightsCard h3{font-size:15px;margin:18px 0 6px;padding-top:14px;border-top:1px solid #1f2945}
+    #insightsCard ul{margin:6px 0 0;padding-left:20px;line-height:1.55;font-size:14px}
+  `;
+  document.head.appendChild(st);
+
+  const card = el('section', 'card'); card.id = 'insightsCard';
+  const h = el('h2', null, '✦ Nova Insights');
+  const hid = el('span', null, ' elnovia ai'); hid.style.display = 'none'; h.appendChild(hid);
+  const body = el('div');
+  card.append(h, body);
+  target.before(card);
+
+  function bar(label, pct, color, sub, right) {
+    const r = el('div', 'in-row');
+    const t = el('div', 'in-top'); t.append(el('span', null, label), el('span', null, right || (pct + ' %')));
+    const b = el('div', 'in-bar'); const f = el('i'); f.style.width = Math.min(100, pct) + '%'; f.style.background = color; b.appendChild(f);
+    r.append(t, b, el('div', 'in-sub', sub));
+    return r;
+  }
+
+  async function load() {
+    try {
+      const { data: ud } = await supabaseClient.auth.getUser();
+      if (!ud || !ud.user) return;
+      const now = new Date();
+      const dow = (now.getDay() + 6) % 7;                        // lundi = 0
+      const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
+      const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6);
+      const m1 = new Date(now.getFullYear(), now.getMonth(), 1), m2 = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      const today = ymd(now);
+
+      const [tk, bd, ex, gl] = await Promise.all([
+        supabaseClient.from('tasks').select('title, status, due_date').limit(1000),
+        supabaseClient.from('budgets').select('category, monthly_limit'),
+        supabaseClient.from('expenses').select('amount, category').is('space_id', null).gte('spent_on', ymd(m1)).lt('spent_on', ymd(m2)).limit(2000),
+        supabaseClient.from('savings_goals').select('label, target, saved')
+      ]);
+      const tasks = tk.data || [], budgets = bd.data || [], exps = ex.data || [], goals = gl.data || [];
+      body.textContent = '';
+      const when = mon.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + ' – ' + sun.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+      h.firstChild.textContent = '✦ Nova Insights';
+      const wk = el('div', 'in-when', 'Semaine du ' + when);
+      body.appendChild(wk);
+
+      // Organisation
+      const day = t => String(t.due_date || '').slice(0, 10);
+      const week = tasks.filter(t => day(t) >= ymd(mon) && day(t) <= ymd(sun));
+      const done = week.filter(t => t.status === 'done').length;
+      if (week.length) {
+        const pct = Math.round(100 * done / week.length);
+        body.appendChild(bar('Organisation', pct, pct >= 70 ? '#2f9e6b' : pct >= 40 ? '#d9962b' : '#d4524f', done + ' tâche' + (done > 1 ? 's' : '') + ' terminée' + (done > 1 ? 's' : '') + ' sur ' + week.length));
+      } else body.appendChild(bar('Organisation', 0, '#2f9e6b', 'Aucune tâche planifiée cette semaine', '—'));
+
+      // Budgets du mois
+      const spent = {};
+      exps.forEach(x => { const c = x.category || 'Autre'; spent[c] = (spent[c] || 0) + Number(x.amount || 0); });
+      const bl = budgets.map(b => ({ c: b.category, s: spent[b.category] || 0, l: Number(b.monthly_limit) })).sort((a, b) => b.s / b.l - a.s / a.l).slice(0, 4);
+      bl.forEach(b => {
+        const pct = Math.round(100 * b.s / b.l);
+        body.appendChild(bar('Budget ' + b.c.toLowerCase(), pct, pct >= 100 ? '#d4524f' : pct >= 80 ? '#d9962b' : '#4a86e8', eur(b.s) + ' utilisés sur ' + eur(b.l) + ' ce mois-ci'));
+      });
+
+      // Objectifs
+      goals.slice(0, 3).forEach(g => {
+        const pct = Math.round(100 * g.saved / g.target);
+        body.appendChild(bar(g.label, pct, '#7c5cff', eur(g.saved) + ' épargnés sur ' + eur(g.target)));
+      });
+
+      // Ce que Nova a remarqué
+      const notes = [];
+      const open = tasks.filter(t => t.status !== 'done');
+      const late = open.filter(t => t.due_date && day(t) < today);
+      if (late.length) notes.push(late.length + ' tâche' + (late.length > 1 ? 's' : '') + ' en retard.');
+      open.filter(t => /^renouveler/i.test(t.title || '') && t.due_date).sort((a, b) => day(a).localeCompare(day(b))).slice(0, 2).forEach(t => {
+        const d = new Date(day(t) + 'T12:00:00'), days = Math.round((d - now) / 864e5);
+        if (days <= 45) notes.push(String(t.title).replace(/^renouveler\s*:?\s*/i, 'À renouveler : ') + (days >= 0 ? ' (dans ' + days + ' j).' : ' (échéance dépassée).'));
+      });
+      bl.filter(b => b.s >= b.l).forEach(b => notes.push('Budget ' + b.c.toLowerCase() + ' dépassé de ' + eur(b.s - b.l) + '.'));
+      bl.filter(b => b.s < b.l && b.s >= 0.8 * b.l).forEach(b => notes.push('Budget ' + b.c.toLowerCase() + ' presque atteint (' + Math.round(100 * b.s / b.l) + ' %).'));
+      const undated = open.filter(t => !t.due_date).length;
+      if (undated) notes.push(undated + ' tâche' + (undated > 1 ? 's restent' : ' reste') + ' à planifier.');
+      body.appendChild(el('h3', null, 'Ce que Nova a remarqué'));
+      if (notes.length) { const ul = el('ul'); notes.slice(0, 6).forEach(n => ul.appendChild(el('li', null, n))); body.appendChild(ul); }
+      else body.appendChild(el('div', 'in-sub', 'Rien de particulier cette semaine. 👌'));
+    } catch (e) { console.error(e); }
+  }
+
+  load();
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 700)); } catch (e) { /* ignoré */ }
+  card.addEventListener('click', () => { /* rafraîchit quand on touche le titre */ });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+})();
+</script>
  </body></html>
