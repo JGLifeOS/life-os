@@ -9672,4 +9672,27 @@ function showAiActions(actions) {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
 })();
 </script>
+  <script>
+// Mode simple v3 : retire les doublons « Scanner » et « + Tâche » de la carte Aujourd'hui (déjà dans les gros boutons)
+(function () {
+  if (window.__elnoviaSimple3) return;
+  window.__elnoviaSimple3 = true;
+  const app = document.getElementById('appContent');
+  if (!app) return;
+  const st = document.createElement('style');
+  st.textContent = 'body.eln-simple #todayCard button.eln-dup{display:none !important}';
+  document.head.appendChild(st);
+  function mark() {
+    const card = document.getElementById('todayCard');
+    if (!card) return;
+    card.querySelectorAll('button').forEach(b => {
+      const t = (b.textContent || '').trim();
+      if (/^📷\s*Scanner$/.test(t) || /^[＋+]\s*Tâche$/.test(t)) b.classList.add('eln-dup');
+    });
+  }
+  let queued = false;
+  new MutationObserver(() => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; mark(); }); }).observe(app, { childList: true, subtree: true });
+  mark(); setTimeout(mark, 500);
+})();
+</script>
  </body></html>
