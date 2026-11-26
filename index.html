@@ -9864,4 +9864,47 @@ function showAiActions(actions) {
   new MutationObserver(addMore).observe(card, { childList: true, subtree: true });
 })();
 </script>
+                                                                 <script>
+// Briefing v1 : réglage du résumé du soir de Nova (dans le ⚙️ de « Nova a quelque chose à te dire »)
+(function () {
+  if (window.__elnoviaBriefing) return;
+  window.__elnoviaBriefing = true;
+
+  function build(set) {
+    if (set.dataset.briefing) return;
+    set.dataset.briefing = '1';
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-top:12px;padding-top:10px;border-top:1px solid #243052';
+    const label = document.createElement('label');
+    label.style.cssText = 'display:flex;gap:8px;align-items:center;padding:5px 0';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.style.cssText = 'width:auto;margin:0';
+    label.append(cb, document.createTextNode('🌙 Résumé du soir (vers 20 h) : ce qui t’attend demain'));
+    const hint = document.createElement('div');
+    hint.style.cssText = 'color:#8390b3;font-size:12px;margin-top:4px';
+    hint.textContent = 'Le briefing du matin arrive vers 7 h 30. Les deux se règlent avec les notifications (onglet Plus).';
+    wrap.append(label, hint);
+    set.appendChild(wrap);
+
+    (async () => {
+      try {
+        const { data, error } = await supabaseClient.from('push_subscriptions').select('evening_on').limit(1);
+        if (error) { hint.textContent = 'Réglage du soir indisponible pour le moment.'; cb.disabled = true; return; }
+        if (!data || !data.length) { cb.disabled = true; hint.textContent = 'Active d’abord les notifications dans l’onglet Plus pour recevoir les briefings.'; return; }
+        cb.checked = data[0].evening_on !== false;
+      } catch (e) { /* ignoré */ }
+    })();
+
+    cb.addEventListener('change', async () => {
+      const user = (await supabaseClient.auth.getUser()).data.user;
+      if (!user) return;
+      const { error } = await supabaseClient.from('push_subscriptions').update({ evening_on: cb.checked }).eq('user_id', user.id);
+      if (error) { console.error(error); cb.checked = !cb.checked; hint.textContent = 'Impossible d’enregistrer ce réglage.'; }
+    });
+  }
+
+  const check = () => { const set = document.querySelector('#novaSays .ns-set'); if (set) build(set); };
+  new MutationObserver(check).observe(document.body, { childList: true, subtree: true });
+  check();
+})();
+</script>
  </body></html>
