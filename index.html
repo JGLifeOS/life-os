@@ -10048,4 +10048,25 @@ function showAiActions(actions) {
   try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 600)); } catch (e) { /* ignoré */ }
 })();
 </script>
+  <script>
+// Tous les boutons micro deviennent une simple icône (🎤 / ⏹)
+(function () {
+  if (window.__micIcon) return; window.__micIcon = true;
+  const st = document.createElement('style');
+  st.textContent = 'button.eln-micicon{width:auto !important;min-width:48px;padding-left:14px;padding-right:14px;font-size:20px;line-height:1;flex:0 0 auto}';
+  document.head.appendChild(st);
+  function fix() {
+    document.querySelectorAll('button').forEach(b => {
+      const t = (b.textContent || '').trim();
+      if (/^🎤\s*Parler$/.test(t)) { b.textContent = '🎤'; b.setAttribute('aria-label', 'Parler'); b.classList.add('eln-micicon'); }
+      else if (/^⏹\s*Arrêter$/.test(t) && b.classList.contains('eln-micicon')) { b.textContent = '⏹'; b.setAttribute('aria-label', 'Arrêter'); }
+      else if (b.classList.contains('eln-micicon') && /^⏹$/.test(t) === false && /^🎤$/.test(t) === false) { /* texte inattendu : on laisse */ }
+    });
+  }
+  let busy = false;
+  new MutationObserver(() => { if (busy) return; busy = true; setTimeout(() => { fix(); busy = false; }, 30); })
+    .observe(document.body, { childList: true, subtree: true, characterData: true });
+  fix();
+})();
+</script>
  </body></html>
