@@ -10844,4 +10844,13 @@ function showAiActions(actions) {
   try { new MutationObserver(() => simplifyTaskForm()).observe(document.body, { childList: true, subtree: true }); } catch (e) { /* ignoré */ }
 })();
 </script>
+                                                                 <script>
+// Retire la carte « Abonnements » de l'écran (le reste de l'app n'est pas touché)
+(function () {
+  if (window.__hideSubs) return; window.__hideSubs = true;
+  const st = document.createElement('style');
+  st.textContent = '#subsSection{display:none !important}';
+  document.head.appendChild(st);
+})();
+</script>
  </body></html>
