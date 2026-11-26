@@ -10069,4 +10069,34 @@ function showAiActions(actions) {
   fix();
 })();
 </script>
+                                                                 <script>
+// Automatisations : bouton micro (dicter la phrase) puis création automatique
+(function () {
+  const card = document.getElementById('autoCard');
+  if (!card || document.getElementById('autoMic')) return;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const ta = card.querySelector('textarea'), go = card.querySelector('.au-go');
+  if (!ta || !go) return;
+  const note = document.createElement('p'); note.className = 'au-intro'; note.style.margin = '6px 0 0';
+  const mic = document.createElement('button'); mic.type = 'button'; mic.id = 'autoMic'; mic.className = 'au-go au-sec'; mic.textContent = '🎤 Parler';
+  mic.style.margin = '0 0 8px';
+  ta.after(mic); mic.after(note);
+  if (!SR) { mic.style.display = 'none'; note.textContent = '🎤 Astuce : utilise le micro du clavier de ton téléphone pour dicter.'; return; }
+  let rec = null, on = false, heard = '';
+  const set = v => { on = v; mic.textContent = v ? '⏹ Arrêter' : '🎤 Parler'; };
+  mic.addEventListener('click', () => {
+    if (on && rec) { rec.stop(); return; }
+    rec = new SR(); rec.lang = 'fr-FR'; rec.interimResults = true; rec.continuous = false; heard = '';
+    note.textContent = '🎤 Je t’écoute… parle maintenant.';
+    rec.onresult = ev => { let t = ''; for (let i = 0; i < ev.results.length; i++) t += ev.results[i][0].transcript; heard = t.trim(); ta.value = heard; };
+    rec.onerror = ev => {
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') note.textContent = 'Micro bloqué. Autorise-le dans les réglages, ou utilise le micro du clavier.';
+      else if (ev.error === 'no-speech') note.textContent = 'Je n’ai rien entendu. Réessaie.';
+      else if (ev.error !== 'aborted') note.textContent = 'La dictée a échoué. Tu peux utiliser le micro du clavier.';
+    };
+    rec.onend = () => { set(false); if (heard) { note.textContent = ''; go.click(); } };
+    try { rec.start(); set(true); } catch (e) { set(false); note.textContent = 'Impossible de démarrer le micro.'; }
+  });
+})();
+</script>
  </body></html>
