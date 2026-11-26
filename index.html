@@ -9907,4 +9907,145 @@ function showAiActions(actions) {
   check();
 })();
 </script>
+                                                                 <script>
+// Automatisations v1 : une phrase -> une règle ; Nova crée la tâche (avec rappel) toute seule le bon jour
+(function () {
+  if (document.getElementById('autoCard')) return;
+  const anchor = document.getElementById('homeCard') || document.getElementById('lifeScanCard') || document.getElementById('memoryCard') ||
+    [...document.querySelectorAll('section.card')].find(s => /elnovia ai/i.test(s.querySelector('h2')?.textContent || '') && !s.classList.contains('gradient'));
+  if (!anchor) return;
+
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const DAYS = ['', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
+  const MONTHS = ['', 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  const hour = t => { const [h, m] = String(t).split(':').map(Number); return h + ' h' + (m ? ' ' + pad(m) : ''); };
+  const dayOfMonth = md => (md === -1 ? 'le dernier jour' : md === 1 ? 'le 1er' : 'le ' + md);
+  function describe(r) {
+    const when = ' à ' + hour(r.at_time || r.heure);
+    const f = r.frequency || r.frequence;
+    if (f === 'daily') return 'Tous les jours' + when;
+    if (f === 'weekly') return 'Chaque ' + DAYS[r.weekday || r.jour_semaine] + when;
+    const md = r.month_day != null ? r.month_day : r.jour_mois, mo = r.month != null ? r.month : r.mois;
+    if (f === 'monthly') return dayOfMonth(md).replace(/^l/, 'L') + ' de chaque mois' + when;
+    return 'Chaque année : ' + dayOfMonth(md) + (md === -1 ? ' de ' : ' ') + MONTHS[mo] + when;
+  }
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #autoCard .au-intro{color:#a9b3cf;font-size:13px;margin:0 0 10px}
+    #autoCard textarea{display:block;width:100%;box-sizing:border-box;margin:6px 0 8px;min-height:70px;resize:vertical;font:inherit}
+    #autoCard .au-go{width:100%}
+    #autoCard .au-chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+    #autoCard .au-chip{background:#1b2540;border:0;border-radius:999px;padding:6px 11px;font-size:12px;color:#c9d2ee;width:auto;margin:0;text-align:left}
+    #autoCard .au-prev{margin-top:12px;padding:12px;background:#12203f;border:1px solid #2d4175;border-radius:14px;font-size:14px;line-height:1.45}
+    #autoCard .au-prev b{display:block;font-size:15px;margin-bottom:2px}
+    #autoCard .au-btns{display:flex;gap:8px;margin-top:10px}
+    #autoCard .au-btns button{flex:1;margin:0}
+    #autoCard .au-sec{background:#1b2540 !important;color:#c9d2ee !important}
+    #autoCard h3{font-size:14px;margin:16px 0 4px;color:#dfe5fa}
+    #autoCard .au-row{display:flex;align-items:center;gap:8px;padding:10px 0;border-top:1px solid #1f2945}
+    #autoCard .au-txt{flex:1;min-width:0;font-size:14px}
+    #autoCard .au-txt small{display:block;color:#8390b3;font-size:12px;margin-top:2px}
+    #autoCard .au-off{opacity:.5}
+    #autoCard .au-mini{background:none;border:0;color:#8390b3;font-size:12px;text-decoration:underline;width:auto;margin:0;padding:6px}
+    #autoCard .au-warn{color:#ffcf9e;font-size:13px;margin-top:8px}
+  `;
+  document.head.appendChild(st);
+
+  const card = el('section', 'card'); card.id = 'autoCard';
+  const h = el('h2', null, '⚡ Automatisations');
+  const hid = el('span', null, ' elnovia ai'); hid.style.display = 'none'; h.appendChild(hid);
+  const intro = el('p', 'au-intro', 'Dis-moi ce que tu veux qu’on te rappelle, et quand : Nova crée la tâche toute seule, avec la notification.');
+  const ta = el('textarea'); ta.maxLength = 280; ta.placeholder = 'Ex. : Chaque premier du mois, rappelle-moi de faire le point sur mon budget';
+  const chips = el('div', 'au-chips');
+  ['Chaque premier du mois, rappelle-moi de faire le point sur mon budget', 'Tous les jeudis à 19h, rappelle-moi de sortir les poubelles', 'Le dernier jour du mois, rappelle-moi de payer mon loyer'].forEach(t => {
+    const c = el('button', 'au-chip', t.length > 52 ? t.slice(0, 50) + '…' : t); c.type = 'button';
+    c.addEventListener('click', () => { ta.value = t; });
+    chips.appendChild(c);
+  });
+  const go = el('button', 'au-go', '✨ Créer l’automatisation'); go.type = 'button';
+  const prev = el('div');
+  const listHead = el('h3', null, 'Mes automatisations');
+  const list = el('div');
+  card.append(h, intro, ta, chips, go, prev, listHead, list);
+  anchor.after(card);
+
+  async function getUser() { try { const { data } = await supabaseClient.auth.getUser(); return data && data.user; } catch (e) { return null; } }
+  let autos = [];
+
+  async function load() {
+    try {
+      const { data, error } = await supabaseClient.from('automations').select('*').order('created_at', { ascending: false }).limit(60);
+      if (error) throw error;
+      autos = data || [];
+      render();
+    } catch (e) { list.textContent = ''; list.appendChild(el('p', 'au-intro', 'Les automatisations ne sont pas encore disponibles (la table n’est pas créée).')); }
+  }
+
+  function render() {
+    list.textContent = '';
+    listHead.style.display = autos.length ? '' : 'none';
+    autos.forEach(a => {
+      const row = el('div', 'au-row' + (a.active ? '' : ' au-off'));
+      const t = el('div', 'au-txt', a.title); t.appendChild(el('small', null, describe(a) + (a.active ? '' : ' · en pause')));
+      const pause = el('button', 'au-mini', a.active ? 'Pause' : 'Reprendre'); pause.type = 'button';
+      pause.addEventListener('click', async () => { await supabaseClient.from('automations').update({ active: !a.active }).eq('id', a.id); load(); });
+      const del = el('button', 'au-mini', 'Supprimer'); del.type = 'button';
+      del.addEventListener('click', async () => {
+        if (del.dataset.sure !== '1') { del.dataset.sure = '1'; del.textContent = 'Confirmer ?'; return; }
+        await supabaseClient.from('automations').delete().eq('id', a.id); load();
+      });
+      row.append(t, pause, del);
+      list.appendChild(row);
+    });
+  }
+
+  let busy = false;
+  go.addEventListener('click', async () => {
+    if (busy) return;
+    const phrase = ta.value.trim();
+    prev.textContent = '';
+    if (phrase.length < 8) { prev.appendChild(el('p', 'au-warn', 'Décris ton automatisation en une phrase.')); return; }
+    if (autos.length >= 30) { prev.appendChild(el('p', 'au-warn', 'Tu as atteint 30 automatisations. Supprime-en une d’abord.')); return; }
+    busy = true; go.disabled = true; const label = go.textContent; go.textContent = '⏳ Je comprends ta phrase…';
+    try {
+      const { data, error } = await supabaseClient.functions.invoke('life-automation', { body: { phrase } });
+      if (error || !data || !data.result) {
+        let m = (data && data.error) || '';
+        try { if (!m && error && error.context) m = (await error.context.json()).error || ''; } catch (e) { /* ignoré */ }
+        prev.appendChild(el('p', 'au-warn', '⚠️ ' + (m || 'Je n’ai pas pu analyser ta phrase. Réessaie.')));
+      } else if (!data.result.comprise) {
+        prev.appendChild(el('p', 'au-warn', '🤔 ' + data.result.question));
+      } else {
+        const r = data.result.regle;
+        const box = el('div', 'au-prev');
+        box.appendChild(el('b', null, '✅ J’ai compris'));
+        box.appendChild(document.createTextNode('« ' + r.titre + ' » — ' + describe(r).replace(/^./, c => c.toLowerCase()) + '.'));
+        const btns = el('div', 'au-btns');
+        const ok = el('button', null, 'Activer'); ok.type = 'button';
+        const no = el('button', 'au-sec', 'Annuler'); no.type = 'button';
+        no.addEventListener('click', () => { prev.textContent = ''; });
+        ok.addEventListener('click', async () => {
+          const u = await getUser(); if (!u) { ok.textContent = 'Connecte-toi'; return; }
+          ok.disabled = true;
+          const now = new Date(), nowT = pad(now.getHours()) + ':' + pad(now.getMinutes());
+          const { error: e2 } = await supabaseClient.from('automations').insert({
+            user_id: u.id, phrase: phrase.slice(0, 280), title: r.titre, frequency: r.frequence, weekday: r.jour_semaine, month_day: r.jour_mois, month: r.mois,
+            at_time: r.heure, active: true, last_run_on: nowT >= r.heure ? ymd(now) : null
+          });
+          if (e2) { console.error(e2); ok.disabled = false; ok.textContent = 'Erreur, réessaie'; return; }
+          ta.value = ''; prev.textContent = ''; prev.appendChild(el('p', 'au-intro', '✓ Automatisation activée.')); load();
+        });
+        btns.append(ok, no); box.appendChild(btns); prev.appendChild(box);
+      }
+    } catch (e) { console.error(e); prev.appendChild(el('p', 'au-warn', '⚠️ Problème de connexion.')); }
+    go.disabled = false; go.textContent = label; busy = false;
+  });
+
+  load();
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 600)); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
