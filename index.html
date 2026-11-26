@@ -10099,4 +10099,232 @@ function showAiActions(actions) {
   });
 })();
 </script>
+  <script>
+// Mes projets : déménagement, vacances, travaux… tâches datées, budget, avancement
+(function () {
+  if (document.getElementById('projCard')) return;
+  const anchor = document.getElementById('calendarSection') || [...document.querySelectorAll('section.card')].find(s => /tâche/i.test(s.querySelector('h2')?.textContent || ''));
+  if (!anchor) return;
+
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const frDate = s => new Date(String(s).slice(0, 10) + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
+  const eur = n => (Math.round(n * 100) / 100).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' €';
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #projCard .pj-intro{color:#a9b3cf;font-size:13px;margin:0 0 10px}
+    #projCard textarea{display:block;width:100%;box-sizing:border-box;margin:6px 0 8px;min-height:64px;resize:vertical;font:inherit}
+    #projCard input{box-sizing:border-box;font:inherit}
+    #projCard .pj-line{display:flex;gap:8px;align-items:center}
+    #projCard .pj-line>button{margin:0}
+    #projCard .pj-go{flex:1}
+    #projCard .pj-mic{width:auto !important;min-width:48px;padding-left:14px;padding-right:14px;font-size:20px;line-height:1;flex:0 0 auto;background:#1b2540 !important}
+    #projCard .pj-sec{background:#1b2540 !important;color:#c9d2ee !important}
+    #projCard .pj-link{background:none;border:0;color:#8390b3;font-size:12px;text-decoration:underline;width:auto;margin:6px 0 0;padding:6px 0}
+    #projCard .pj-warn{color:#ffcf9e;font-size:13px;margin:8px 0 0}
+    #projCard .pj-prev{margin-top:12px;padding:12px;background:#12203f;border:1px solid #2d4175;border-radius:14px;font-size:14px}
+    #projCard .pj-prev b{display:block;font-size:15px;margin-bottom:6px}
+    #projCard .pj-chk{display:flex;gap:8px;align-items:flex-start;padding:5px 0;font-size:14px}
+    #projCard .pj-chk input{margin-top:3px;flex:0 0 auto;width:auto}
+    #projCard .pj-chk small{color:#8390b3;display:block;font-size:12px}
+    #projCard .pj-btns{display:flex;gap:8px;margin-top:10px}
+    #projCard .pj-btns button{flex:1;margin:0}
+    #projCard h3{font-size:14px;margin:16px 0 4px;color:#dfe5fa}
+    #projCard .pj-p{border-top:1px solid #1f2945;padding:10px 0}
+    #projCard .pj-head{display:flex;align-items:center;gap:10px;cursor:pointer}
+    #projCard .pj-emo{font-size:24px}
+    #projCard .pj-ti{flex:1;min-width:0;font-size:15px}
+    #projCard .pj-ti small{display:block;color:#8390b3;font-size:12px;margin-top:2px}
+    #projCard .pj-bar{height:6px;background:#1f2945;border-radius:99px;margin:8px 0 2px;overflow:hidden}
+    #projCard .pj-bar i{display:block;height:100%;background:#7c5cff;border-radius:99px}
+    #projCard .pj-body{margin-top:8px}
+    #projCard .pj-t{display:flex;gap:8px;align-items:flex-start;padding:6px 0;font-size:14px}
+    #projCard .pj-t input{margin-top:3px;width:auto;flex:0 0 auto}
+    #projCard .pj-t.on span{text-decoration:line-through;opacity:.55}
+    #projCard .pj-t small{color:#8390b3;margin-left:6px;font-size:12px}
+    #projCard .pj-add{display:flex;gap:6px;margin:8px 0}
+    #projCard .pj-add input{flex:1;min-width:0}
+    #projCard .pj-add button{margin:0;width:auto;flex:0 0 auto}
+    #projCard .pj-over{color:#ff9d9d}
+    #projCard .pj-mini{background:none;border:0;color:#8390b3;font-size:12px;text-decoration:underline;width:auto;margin:4px 12px 0 0;padding:6px 0}
+  `;
+  document.head.appendChild(st);
+
+  const card = el('section', 'card'); card.id = 'projCard';
+  const h = el('h2', null, '🗂️ Mes projets');
+  const hid = el('span', null, ' tâches'); hid.style.display = 'none'; h.appendChild(hid);
+  const intro = el('p', 'pj-intro', 'Un déménagement, des vacances, des travaux ? Décris ton projet en une phrase : Nova prépare les tâches, avec les dates.');
+  const ta = el('textarea'); ta.maxLength = 380; ta.placeholder = 'Ex. : Je déménage le 15 janvier à Perpignan';
+  const mic = el('button', 'pj-mic', '🎤'); mic.type = 'button'; mic.setAttribute('aria-label', 'Parler');
+  const go = el('button', 'pj-go', '✨ Planifier avec Nova'); go.type = 'button';
+  const line = el('div', 'pj-line'); line.append(mic, go);
+  const blank = el('button', 'pj-link', 'ou créer un projet vide'); blank.type = 'button';
+  const prev = el('div');
+  const head2 = el('h3', null, 'Mes projets en cours');
+  const list = el('div');
+  card.append(h, intro, ta, line, blank, prev, head2, list);
+  anchor.after(card);
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) mic.style.display = 'none';
+  else {
+    let rec = null, on = false, heard = '';
+    const set = v => { on = v; mic.textContent = v ? '⏹' : '🎤'; };
+    mic.addEventListener('click', () => {
+      if (on && rec) { rec.stop(); return; }
+      rec = new SR(); rec.lang = 'fr-FR'; rec.interimResults = true; rec.continuous = false; heard = '';
+      rec.onresult = ev => { let t = ''; for (let i = 0; i < ev.results.length; i++) t += ev.results[i][0].transcript; heard = t.trim(); ta.value = heard; };
+      rec.onerror = () => { prev.textContent = ''; };
+      rec.onend = () => { set(false); if (heard) go.click(); };
+      try { rec.start(); set(true); } catch (e) { set(false); }
+    });
+  }
+
+  async function getUser() { try { const { data } = await supabaseClient.auth.getUser(); return data && data.user; } catch (e) { return null; } }
+  const refreshTasks = () => { try { if (typeof window.loadTasks === 'function') window.loadTasks(); } catch (e) { /* ignoré */ } };
+
+  let projects = [], tasks = [], expenses = [], openId = null;
+
+  async function load() {
+    try {
+      const p = await supabaseClient.from('projects').select('*').eq('status', 'active').order('created_at', { ascending: false }).limit(30);
+      if (p.error) throw p.error;
+      projects = p.data || [];
+      const ids = projects.map(x => x.id);
+      if (ids.length) {
+        const t = await supabaseClient.from('tasks').select('id,title,status,due_date,project_id').in('project_id', ids).order('due_date', { ascending: true }).limit(500);
+        tasks = t.data || [];
+        const e = await supabaseClient.from('expenses').select('id,label,amount,project_id').in('project_id', ids).limit(500);
+        expenses = e.data || [];
+      } else { tasks = []; expenses = []; }
+      render();
+    } catch (e) { list.textContent = ''; list.appendChild(el('p', 'pj-intro', 'Les projets ne sont pas encore disponibles (la base n’est pas prête).')); head2.style.display = 'none'; }
+  }
+
+  async function addTask(pid, title, date) {
+    const u = await getUser(); if (!u) return;
+    const row = { user_id: u.id, title: title.slice(0, 120), status: 'todo', category: 'Personnel', priority: 'medium', project_id: pid };
+    if (date) row.due_date = date + 'T12:00:00';
+    return supabaseClient.from('tasks').insert(row);
+  }
+
+  function render() {
+    list.textContent = '';
+    head2.style.display = projects.length ? '' : 'none';
+    projects.forEach(p => {
+      const ts = tasks.filter(t => t.project_id === p.id), done = ts.filter(t => t.status === 'done').length;
+      const spent = expenses.filter(x => x.project_id === p.id).reduce((s, x) => s + Number(x.amount || 0), 0);
+      const box = el('div', 'pj-p');
+      const hd = el('div', 'pj-head');
+      const ti = el('div', 'pj-ti', p.title);
+      const bits = [];
+      if (p.due_on) bits.push('📅 ' + frDate(p.due_on));
+      bits.push(done + '/' + ts.length + ' tâches');
+      if (p.budget || spent) bits.push(p.budget ? eur(spent) + ' / ' + eur(Number(p.budget)) : eur(spent));
+      ti.appendChild(el('small', null, bits.join(' · ')));
+      hd.append(el('span', 'pj-emo', p.emoji || '🗂️'), ti, el('span', null, openId === p.id ? '▴' : '▾'));
+      hd.addEventListener('click', () => { openId = openId === p.id ? null : p.id; render(); });
+      box.appendChild(hd);
+      const bar = el('div', 'pj-bar'); const fill = el('i'); fill.style.width = (ts.length ? Math.round(done / ts.length * 100) : 0) + '%'; bar.appendChild(fill); box.appendChild(bar);
+      if (openId === p.id) {
+        const body = el('div', 'pj-body');
+        if (p.budget && spent > Number(p.budget)) body.appendChild(el('p', 'pj-warn pj-over', '⚠️ Budget dépassé de ' + eur(spent - Number(p.budget))));
+        ts.forEach(t => {
+          const row = el('label', 'pj-t' + (t.status === 'done' ? ' on' : ''));
+          const cb = el('input'); cb.type = 'checkbox'; cb.checked = t.status === 'done';
+          cb.addEventListener('change', async () => { await supabaseClient.from('tasks').update({ status: cb.checked ? 'done' : 'todo' }).eq('id', t.id); refreshTasks(); load(); });
+          const tx = el('span', null, t.title); if (t.due_date) tx.appendChild(el('small', null, frDate(t.due_date)));
+          row.append(cb, tx); body.appendChild(row);
+        });
+        const addT = el('div', 'pj-add'); const ti2 = el('input'); ti2.placeholder = 'Ajouter une tâche'; ti2.maxLength = 120;
+        const okT = el('button', null, '＋'); okT.type = 'button';
+        okT.addEventListener('click', async () => { const v = ti2.value.trim(); if (!v) return; okT.disabled = true; await addTask(p.id, v, null); refreshTasks(); load(); });
+        addT.append(ti2, okT); body.appendChild(addT);
+        const addE = el('div', 'pj-add'); const lab = el('input'); lab.placeholder = 'Dépense (ex. camion)'; lab.maxLength = 80;
+        const amt = el('input'); amt.placeholder = '€'; amt.type = 'number'; amt.inputMode = 'decimal'; amt.step = '0.01'; amt.style.maxWidth = '90px';
+        const okE = el('button', null, '＋'); okE.type = 'button';
+        okE.addEventListener('click', async () => {
+          const v = Number(String(amt.value).replace(',', '.')); const l = lab.value.trim() || p.title;
+          if (!(v > 0)) return; const u = await getUser(); if (!u) return; okE.disabled = true;
+          await supabaseClient.from('expenses').insert({ user_id: u.id, label: l.slice(0, 80), amount: Math.round(v * 100) / 100, category: 'Autre', spent_on: ymd(new Date()), project_id: p.id });
+          load();
+        });
+        addE.append(lab, amt, okE); body.appendChild(addE);
+        const fin = el('button', 'pj-mini', '✅ Projet terminé'); fin.type = 'button';
+        fin.addEventListener('click', async () => { await supabaseClient.from('projects').update({ status: 'done' }).eq('id', p.id); openId = null; load(); });
+        const del = el('button', 'pj-mini', 'Supprimer'); del.type = 'button';
+        del.addEventListener('click', async () => {
+          if (del.dataset.sure !== '1') { del.dataset.sure = '1'; del.textContent = 'Confirmer (supprime aussi ses tâches) ?'; return; }
+          await supabaseClient.from('tasks').delete().eq('project_id', p.id);
+          await supabaseClient.from('projects').delete().eq('id', p.id); openId = null; refreshTasks(); load();
+        });
+        body.append(fin, del); box.appendChild(body);
+      }
+      list.appendChild(box);
+    });
+  }
+
+  async function createProject(pr, picked) {
+    const u = await getUser(); if (!u) return false;
+    const { data, error } = await supabaseClient.from('projects').insert({ user_id: u.id, title: pr.titre.slice(0, 100), emoji: pr.emoji || '🗂️', due_on: pr.date_echeance || null, budget: pr.budget || null }).select('id').single();
+    if (error || !data) { console.error(error); return false; }
+    if (picked.length) {
+      const rows = picked.map(t => { const r = { user_id: u.id, title: t.titre.slice(0, 120), status: 'todo', category: 'Personnel', priority: 'medium', project_id: data.id }; if (t.date) r.due_date = t.date + 'T12:00:00'; return r; });
+      const { error: e2 } = await supabaseClient.from('tasks').insert(rows); if (e2) console.error(e2);
+    }
+    openId = data.id; refreshTasks(); return true;
+  }
+
+  blank.addEventListener('click', async () => {
+    const t = ta.value.trim(); prev.textContent = '';
+    if (t.length < 2) { prev.appendChild(el('p', 'pj-warn', 'Écris d’abord le nom du projet.')); return; }
+    const ok = await createProject({ titre: t, emoji: '🗂️', date_echeance: null, budget: null }, []);
+    if (ok) { ta.value = ''; load(); } else prev.appendChild(el('p', 'pj-warn', '⚠️ Impossible de créer le projet.'));
+  });
+
+  let busy = false;
+  go.addEventListener('click', async () => {
+    if (busy) return;
+    const phrase = ta.value.trim(); prev.textContent = '';
+    if (phrase.length < 6) { prev.appendChild(el('p', 'pj-warn', 'Décris ton projet en une phrase.')); return; }
+    if (projects.length >= 20) { prev.appendChild(el('p', 'pj-warn', 'Tu as 20 projets en cours. Termine-en un d’abord.')); return; }
+    busy = true; go.disabled = true; const label = go.textContent; go.textContent = '⏳ Nova prépare ton projet…';
+    try {
+      const { data, error } = await supabaseClient.functions.invoke('life-project', { body: { phrase } });
+      if (error || !data || !data.result) {
+        let m = (data && data.error) || '';
+        try { if (!m && error && error.context) m = (await error.context.json()).error || ''; } catch (e) { /* ignoré */ }
+        prev.appendChild(el('p', 'pj-warn', '⚠️ ' + (m || 'Je n’ai pas pu préparer ton projet. Réessaie.')));
+      } else if (!data.result.comprise) {
+        prev.appendChild(el('p', 'pj-warn', '🤔 ' + data.result.question));
+      } else {
+        const pr = data.result.projet, box = el('div', 'pj-prev');
+        box.appendChild(el('b', null, pr.emoji + ' ' + pr.titre + (pr.date_echeance ? ' — ' + frDate(pr.date_echeance) : '')));
+        const checks = [];
+        pr.taches.forEach(t => {
+          const row = el('label', 'pj-chk'); const cb = el('input'); cb.type = 'checkbox'; cb.checked = true;
+          const tx = el('div', null, t.titre); if (t.date) tx.appendChild(el('small', null, 'À faire le ' + frDate(t.date)));
+          row.append(cb, tx); box.appendChild(row); checks.push([cb, t]);
+        });
+        const btns = el('div', 'pj-btns');
+        const ok = el('button', null, 'Créer le projet'); ok.type = 'button';
+        const no = el('button', 'pj-sec', 'Annuler'); no.type = 'button';
+        no.addEventListener('click', () => { prev.textContent = ''; });
+        ok.addEventListener('click', async () => {
+          ok.disabled = true;
+          const done = await createProject(pr, checks.filter(c => c[0].checked).map(c => c[1]));
+          if (done) { ta.value = ''; prev.textContent = ''; load(); } else { ok.disabled = false; ok.textContent = 'Erreur, réessaie'; }
+        });
+        btns.append(ok, no); box.appendChild(btns); prev.appendChild(box);
+      }
+    } catch (e) { console.error(e); prev.appendChild(el('p', 'pj-warn', '⚠️ Problème de connexion.')); }
+    go.disabled = false; go.textContent = label; busy = false;
+  });
+
+  load();
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 600)); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
