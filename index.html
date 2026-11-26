@@ -10581,4 +10581,89 @@ function showAiActions(actions) {
   try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 600)); } catch (e) { /* ignoré */ }
 })();
 </script>
+                    <script>
+// Planning de la semaine : Nova répartit tes tâches sur 7 jours, tu valides d'un tap
+(function () {
+  if (document.getElementById('planCard')) return;
+  const anchor = document.getElementById('projCard') || document.getElementById('calendarSection') || [...document.querySelectorAll('section.card')].find(s => /tâche/i.test(s.querySelector('h2')?.textContent || ''));
+  if (!anchor) return;
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const frDay = s => { const t = new Date(s + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'short' }); return t.charAt(0).toUpperCase() + t.slice(1); };
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #planCard .pl-intro{color:#a9b3cf;font-size:13px;margin:0 0 10px}
+    #planCard .pl-go{width:100%}
+    #planCard .pl-warn{color:#ffcf9e;font-size:13px;margin:8px 0 0}
+    #planCard .pl-advice{margin:12px 0 4px;padding:10px 12px;background:#12203f;border:1px solid #2d4175;border-radius:14px;font-size:14px}
+    #planCard .pl-day{margin-top:12px}
+    #planCard .pl-day b{display:block;font-size:14px;color:#dfe5fa;margin-bottom:2px}
+    #planCard .pl-t{display:flex;gap:8px;padding:5px 0;font-size:14px;align-items:flex-start}
+    #planCard .pl-t input{margin-top:3px;width:auto;flex:0 0 auto}
+    #planCard .pl-t small{display:block;color:#8390b3;font-size:12px}
+    #planCard .pl-left{margin-top:12px;color:#8390b3;font-size:12px}
+    #planCard .pl-btns{display:flex;gap:8px;margin-top:14px}
+    #planCard .pl-btns button{flex:1;margin:0}
+    #planCard .pl-sec{background:#1b2540 !important;color:#c9d2ee !important}
+  `;
+  document.head.appendChild(st);
+
+  const card = el('section', 'card'); card.id = 'planCard';
+  const h = el('h2', null, '📅 Planning de la semaine');
+  const hid = el('span', null, ' tâches'); hid.style.display = 'none'; h.appendChild(hid);
+  const intro = el('p', 'pl-intro', 'Nova répartit tes tâches sur les 7 prochains jours : le plus urgent d’abord, sans surcharger une journée.');
+  const go = el('button', 'pl-go', '✨ Planifier ma semaine'); go.type = 'button';
+  const out = el('div');
+  card.append(h, intro, go, out);
+  anchor.after(card);
+
+  const refreshTasks = () => { try { if (typeof window.loadTasks === 'function') window.loadTasks(); } catch (e) { /* ignoré */ } };
+  let busy = false;
+  go.addEventListener('click', async () => {
+    if (busy) return; busy = true; go.disabled = true; const label = go.textContent; go.textContent = '⏳ Nova organise ta semaine…'; out.textContent = '';
+    try {
+      const { data, error } = await supabaseClient.functions.invoke('life-planning', { body: {} });
+      if (error || !data || !data.result) {
+        let m = (data && data.error) || '';
+        try { if (!m && error && error.context) m = (await error.context.json()).error || ''; } catch (e) { /* ignoré */ }
+        out.appendChild(el('p', 'pl-warn', '⚠️ ' + (m || 'Je n’ai pas pu préparer ton planning. Réessaie.')));
+      } else if (data.result.vide) {
+        out.appendChild(el('p', 'pl-intro', '🎉 Tu n’as aucune tâche en cours. Profite de ta semaine !'));
+      } else {
+        const r = data.result;
+        if (r.conseil) out.appendChild(el('div', 'pl-advice', '🧭 ' + r.conseil));
+        const checks = [];
+        r.jours.forEach(j => {
+          const items = r.plan.filter(p => p.date === j.date); if (!items.length) return;
+          const d = el('div', 'pl-day'); d.appendChild(el('b', null, frDay(j.date)));
+          items.forEach(p => {
+            const row = el('label', 'pl-t'); const cb = el('input'); cb.type = 'checkbox'; cb.checked = true;
+            const tx = el('div', null, p.title);
+            if (p.due && p.due !== p.date) tx.appendChild(el('small', null, p.due < j.date ? 'En retard (échéance ' + frDay(p.due) + ')' : 'Échéance : ' + frDay(p.due)));
+            row.append(cb, tx); d.appendChild(row); checks.push([cb, p]);
+          });
+          out.appendChild(d);
+        });
+        if (r.laisse && r.laisse.length) out.appendChild(el('p', 'pl-left', 'Pas cette semaine : ' + r.laisse.join(' · ')));
+        const btns = el('div', 'pl-btns');
+        const ok = el('button', null, 'Appliquer ce planning'); ok.type = 'button';
+        const no = el('button', 'pl-sec', 'Annuler'); no.type = 'button';
+        no.addEventListener('click', () => { out.textContent = ''; });
+        ok.addEventListener('click', async () => {
+          ok.disabled = true; ok.textContent = '⏳ Je range tes tâches…'; let fail = 0, n = 0;
+          for (const [cb, p] of checks) {
+            if (!cb.checked) continue;
+            const { error: e } = await supabaseClient.from('tasks').update({ due_date: p.date + 'T12:00:00' }).eq('id', p.id);
+            if (e) { console.error(e); fail++; } else n++;
+          }
+          refreshTasks(); out.textContent = '';
+          out.appendChild(el('p', 'pl-intro', fail ? '⚠️ ' + fail + ' tâche(s) n’ont pas pu être déplacées.' : '✅ Planning appliqué : ' + n + ' tâche(s) placée(s) dans ta semaine.'));
+        });
+        btns.append(ok, no); out.appendChild(btns);
+      }
+    } catch (e) { console.error(e); out.appendChild(el('p', 'pl-warn', '⚠️ Problème de connexion.')); }
+    go.disabled = false; go.textContent = label; busy = false;
+  });
+})();
+</script>
  </body></html>
