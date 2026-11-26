@@ -9695,4 +9695,116 @@ function showAiActions(actions) {
   mark(); setTimeout(mark, 500);
 })();
 </script>
+  <script>
+// Scanner universel v1 : un seul bouton « Scanner ». Nova reconnaît frigo, panne, document, liste… et propose l'action adaptée.
+(function () {
+  const card = document.getElementById('lifeScanCard');
+  if (!card || card.dataset.universal) return;
+  card.dataset.universal = '1';
+
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #lifeScanCard .ls-btns{display:none !important}
+    #lifeScanCard .ls-go{width:100%;min-height:64px;font-size:17px;font-weight:700;border-radius:16px;margin:6px 0 10px}
+    #lifeScanCard .ls-more{margin-top:12px;padding:12px;background:#12203f;border:1px solid #2d4175;border-radius:14px;font-size:14px}
+    #lifeScanCard .ls-more button{width:100%;margin-top:8px}
+    #lifeScanCard .ls-more ul{margin:6px 0 0;padding-left:18px}
+  `;
+  document.head.appendChild(st);
+
+  // Titre, texte, gros bouton
+  const h = card.querySelector('h2');
+  if (h && h.firstChild) h.firstChild.textContent = '📸 Scanner';
+  const intro = card.querySelector('.ls-intro');
+  if (intro) intro.textContent = 'Prends une photo, sans rien choisir : Nova reconnaît un ticket, une facture, un courrier, ton frigo, un appareil en panne ou une liste, et te propose quoi faire.';
+  const old = card.querySelector('.ls-btns button');
+  const go = el('button', 'ls-go', '📸 Scanner quelque chose');
+  go.type = 'button';
+  go.addEventListener('click', () => { if (old) old.click(); });      // ouvre la sélection de photo
+  const btns = card.querySelector('.ls-btns');
+  if (btns) btns.after(go);
+
+  // Toujours le mode « auto » côté serveur, et on garde la dernière photo
+  let last = { base64: null, result: null };
+  try {
+    const own = Object.getOwnPropertyDescriptor(supabaseClient, 'functions');
+    const proto = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(supabaseClient), 'functions');
+    const desc = own || proto;
+    const wrap = f => {
+      if (!f || f.__elnUniversal) return f;
+      const original = f.invoke.bind(f);
+      f.invoke = async function (name, options) {
+        if (name === 'life-scan' && options && options.body) { options.body.mode = 'auto'; last = { base64: options.body.base64, result: null }; }
+        const res = await original(name, options);
+        try { if (name === 'life-scan' && res && res.data && res.data.result) last.result = res.data.result; } catch (e) { /* ignoré */ }
+        return res;
+      };
+      f.__elnUniversal = true;
+      return f;
+    };
+    if (desc && desc.get) Object.defineProperty(supabaseClient, 'functions', { configurable: true, get() { return wrap(desc.get.call(this)); } });
+    else if (supabaseClient.functions) wrap(supabaseClient.functions);
+  } catch (e) { console.error(e); }
+
+  async function user() { try { const { data } = await supabaseClient.auth.getUser(); return data && data.user; } catch (e) { return null; } }
+  function goTab(id) { const b = document.querySelector('#elnTabs button[data-tab="' + id + '"]'); if (b) b.click(); }
+
+  // Document : on passe la même photo au scan de documents (lecture, rangement, dépense, rappel de renouvellement)
+  function toDocuments() {
+    const input = document.querySelector('#scanBox input[type=file]');
+    if (!input || !last.base64) return false;
+    const bin = atob(last.base64); const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const file = new File([bytes], 'scan.jpg', { type: 'image/jpeg' });
+    const dt = new DataTransfer(); dt.items.add(file);
+    input.files = dt.files;
+    goTab('more');
+    setTimeout(() => {
+      const docCard = input.closest('section.card');
+      if (docCard) { docCard.classList.add('eln-open'); docCard.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }, 200);
+    return true;
+  }
+
+  async function createItems(r, btn) {
+    const u = await user();
+    if (!u) { btn.textContent = 'Connecte-toi'; return; }
+    btn.disabled = true;
+    const items = r.liste.elements;
+    let error;
+    if (r.liste.nature === 'courses') {
+      ({ error } = await supabaseClient.from('shopping_items').insert(items.map(l => ({ user_id: u.id, space_id: null, label: l.charAt(0).toUpperCase() + l.slice(1, 120) }))));
+    } else {
+      const d = new Date(); d.setDate(d.getDate() + 1);
+      ({ error } = await supabaseClient.from('tasks').insert(items.map(t => ({ user_id: u.id, title: t.slice(0, 120), status: 'todo', category: 'Personnel', priority: 'medium', due_date: ymd(d) + 'T12:00:00' }))));
+      try { if (typeof window.loadTasks === 'function') window.loadTasks(); } catch (e) { /* ignoré */ }
+    }
+    if (error) { console.error(error); btn.disabled = false; btn.textContent = 'Erreur, réessaie'; return; }
+    btn.textContent = r.liste.nature === 'courses' ? '✓ Ajouté aux courses' : '✓ ' + items.length + ' tâches créées pour demain';
+  }
+
+  function addMore() {
+    const sum = card.querySelector('.ls-sum');
+    const r = last.result;
+    if (!sum || !r || card.querySelector('.ls-more')) return;
+    if (r.type === 'document') {
+      const box = el('div', 'ls-more', '📄 Ça ressemble à un document. Je peux le lire et te proposer où le ranger, la dépense à noter ou un rappel.');
+      const b = el('button', null, '📄 Lire et ranger ce document'); b.type = 'button';
+      b.addEventListener('click', () => { if (!toDocuments()) b.textContent = 'Scan de documents introuvable'; });
+      box.appendChild(b); sum.after(box);
+    } else if (r.type === 'liste' && r.liste) {
+      const box = el('div', 'ls-more', r.liste.nature === 'courses' ? '🛒 J’ai lu cette liste de courses :' : '✅ J’ai lu cette liste de choses à faire :');
+      const ul = el('ul'); r.liste.elements.forEach(t => ul.appendChild(el('li', null, t))); box.appendChild(ul);
+      const b = el('button', null, r.liste.nature === 'courses' ? '➕ Ajouter à mes courses' : '➕ Créer ces ' + r.liste.elements.length + ' tâches'); b.type = 'button';
+      b.addEventListener('click', () => createItems(r, b));
+      box.appendChild(b); sum.after(box);
+    }
+  }
+  new MutationObserver(addMore).observe(card, { childList: true, subtree: true });
+})();
+</script>
  </body></html>
