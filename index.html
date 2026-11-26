@@ -10776,4 +10776,144 @@ function showAiActions(actions) {
   }
 })();
 </script>
+                               <script>
+// Patrimoine : ce que j'ai, ce que je dois, ce qu'il me reste, et l'évolution
+(function () {
+  if (document.getElementById('netCard')) return;
+  const anchor = document.getElementById('budgetSection') || document.getElementById('recapSection') ||
+    [...document.querySelectorAll('section.card')].find(s => /financ|budget/i.test(s.querySelector('h2')?.textContent || ''));
+  if (!anchor) return;
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const eur = n => Math.round(n).toLocaleString('fr-FR') + ' €';
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const CATS = { asset: ['Compte courant', 'Épargne', 'Placements', 'Immobilier', 'Véhicule', 'Autre'], debt: ['Crédit immobilier', 'Crédit auto', 'Crédit conso', 'Autre dette'] };
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #netCard .nw-intro{color:#a9b3cf;font-size:13px;margin:0 0 10px}
+    #netCard .nw-big{text-align:center;margin:6px 0 2px}
+    #netCard .nw-big b{display:block;font-size:30px}
+    #netCard .nw-big span{font-size:13px;color:#a9b3cf}
+    #netCard .nw-up{color:#7ee0a1 !important}
+    #netCard .nw-down{color:#ff9d9d !important}
+    #netCard .nw-split{display:flex;gap:8px;margin:10px 0}
+    #netCard .nw-split div{flex:1;background:#12203f;border:1px solid #2d4175;border-radius:14px;padding:8px 10px;font-size:13px;color:#a9b3cf}
+    #netCard .nw-split b{display:block;font-size:17px;color:#fff;margin-top:2px}
+    #netCard svg{display:block;width:100%;height:70px;margin:6px 0}
+    #netCard h3{font-size:14px;margin:14px 0 4px;color:#dfe5fa}
+    #netCard .nw-row{display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid #1f2945}
+    #netCard .nw-txt{flex:1;min-width:0;font-size:14px}
+    #netCard .nw-txt small{display:block;color:#8390b3;font-size:12px}
+    #netCard .nw-val{background:none;border:0;color:#fff;font-size:15px;width:auto;margin:0;padding:4px 0;text-decoration:underline dotted}
+    #netCard .nw-mini{background:none;border:0;color:#8390b3;font-size:12px;text-decoration:underline;width:auto;margin:0;padding:6px 0 6px 6px}
+    #netCard .nw-form{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px}
+    #netCard .nw-form input,#netCard .nw-form select{font:inherit;box-sizing:border-box;min-width:0;width:100%}
+    #netCard .nw-form .full{grid-column:1/3}
+    #netCard .nw-warn{color:#ffcf9e;font-size:13px;margin:6px 0 0}
+  `;
+  document.head.appendChild(st);
+
+  const card = el('section', 'card'); card.id = 'netCard';
+  const h = el('h2', null, '🏦 Mon patrimoine');
+  const hid = el('span', null, ' financ'); hid.style.display = 'none'; h.appendChild(hid);
+  const intro = el('p', 'nw-intro', 'Ce que tu possèdes, ce que tu dois, et ce qu’il te reste. Tu mets les montants à jour quand tu veux : ELNOVIA garde l’historique.');
+  const summary = el('div');
+  const chart = el('div');
+  const list = el('div');
+  const form = el('div', 'nw-form');
+  const kind = el('select'); [['asset', '➕ Je possède'], ['debt', '➖ Je dois']].forEach(([v, l]) => { const o = el('option', null, l); o.value = v; kind.appendChild(o); });
+  const cat = el('select');
+  const label = el('input'); label.placeholder = 'Nom (ex. Livret A)'; label.maxLength = 80;
+  const val = el('input'); val.type = 'number'; val.inputMode = 'decimal'; val.step = '0.01'; val.placeholder = 'Montant €';
+  const add = el('button', 'full', 'Ajouter'); add.type = 'button';
+  const msg = el('p', 'nw-warn');
+  const fillCats = () => { cat.textContent = ''; CATS[kind.value].forEach(c => { const o = el('option', null, c); o.value = c; cat.appendChild(o); }); };
+  fillCats(); kind.addEventListener('change', fillCats);
+  const lab1 = el('div', 'full'); lab1.append(label);
+  form.append(kind, cat, lab1, val, add);
+  card.append(h, intro, summary, chart, list, el('h3', null, 'Ajouter un élément'), form, msg);
+  anchor.after(card);
+
+  let items = [], snaps = [];
+  async function getUser() { try { const { data } = await supabaseClient.auth.getUser(); return data && data.user; } catch (e) { return null; } }
+
+  async function saveSnapshot() {
+    const u = await getUser(); if (!u) return;
+    const a = items.filter(i => i.kind === 'asset').reduce((s, i) => s + Number(i.value), 0);
+    const d = items.filter(i => i.kind === 'debt').reduce((s, i) => s + Number(i.value), 0);
+    await supabaseClient.from('net_worth_snapshots').upsert({ user_id: u.id, taken_on: ymd(new Date()), assets_total: a, debts_total: d }, { onConflict: 'user_id,taken_on' });
+  }
+  async function load() {
+    try {
+      const a = await supabaseClient.from('assets').select('*').order('value', { ascending: false }).limit(100);
+      if (a.error) throw a.error;
+      items = a.data || [];
+      const s = await supabaseClient.from('net_worth_snapshots').select('taken_on,assets_total,debts_total').order('taken_on', { ascending: true }).limit(400);
+      snaps = s.data || [];
+      render();
+    } catch (e) { summary.textContent = ''; summary.appendChild(el('p', 'nw-intro', 'Le patrimoine n’est pas encore disponible (la base n’est pas prête).')); }
+  }
+  async function changed() { await load(); await saveSnapshot(); await load(); }
+
+  function render() {
+    const A = items.filter(i => i.kind === 'asset'), D = items.filter(i => i.kind === 'debt');
+    const ta = A.reduce((s, i) => s + Number(i.value), 0), td = D.reduce((s, i) => s + Number(i.value), 0), net = ta - td;
+    summary.textContent = '';
+    const big = el('div', 'nw-big'); big.append(el('span', null, 'Il te reste'), el('b', net < 0 ? 'nw-down' : null, (net < 0 ? '−' : '') + eur(Math.abs(net))));
+    const past = snaps.filter(s => s.taken_on <= ymd(new Date(Date.now() - 30 * 86400000)));
+    const ref = past.length ? past[past.length - 1] : (snaps.length > 1 ? snaps[0] : null);
+    if (ref) { const diff = net - (Number(ref.assets_total) - Number(ref.debts_total)); if (Math.round(diff) !== 0) big.appendChild(el('span', diff > 0 ? 'nw-up' : 'nw-down', (diff > 0 ? '▲ +' : '▼ −') + eur(Math.abs(diff)) + (past.length ? ' sur 30 jours' : ' depuis le début'))); }
+    const split = el('div', 'nw-split'); const d1 = el('div', null, 'Je possède'); d1.appendChild(el('b', null, eur(ta))); const d2 = el('div', null, 'Je dois'); d2.appendChild(el('b', null, eur(td))); split.append(d1, d2);
+    summary.append(big, split);
+
+    chart.textContent = '';
+    if (snaps.length >= 2) {
+      const pts = snaps.slice(-60).map(s => Number(s.assets_total) - Number(s.debts_total));
+      const min = Math.min(...pts), max = Math.max(...pts), span = max - min || 1;
+      const NS = 'http://www.w3.org/2000/svg'; const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 300 70'); svg.setAttribute('preserveAspectRatio', 'none');
+      const line = document.createElementNS(NS, 'polyline'); line.setAttribute('fill', 'none'); line.setAttribute('stroke', '#7c5cff'); line.setAttribute('stroke-width', '2.5'); line.setAttribute('stroke-linejoin', 'round');
+      line.setAttribute('points', pts.map((v, i) => (pts.length === 1 ? 0 : i / (pts.length - 1) * 300).toFixed(1) + ',' + (62 - (v - min) / span * 54).toFixed(1)).join(' '));
+      svg.appendChild(line); chart.appendChild(svg);
+    }
+
+    list.textContent = '';
+    [['Ce que je possède', A], ['Ce que je dois', D]].forEach(([title, arr]) => {
+      if (!arr.length) return;
+      list.appendChild(el('h3', null, title));
+      arr.forEach(it => {
+        const row = el('div', 'nw-row'); const t = el('div', 'nw-txt', it.label); t.appendChild(el('small', null, it.category));
+        const v = el('button', 'nw-val', eur(Number(it.value))); v.type = 'button';
+        v.addEventListener('click', () => {
+          const inp = el('input'); inp.type = 'number'; inp.inputMode = 'decimal'; inp.step = '0.01'; inp.value = it.value; inp.style.cssText = 'width:110px;font:inherit';
+          const ok = el('button', 'nw-mini', 'OK'); ok.type = 'button';
+          v.replaceWith(inp, ok); inp.focus();
+          ok.addEventListener('click', async () => { const n = Number(String(inp.value).replace(',', '.')); if (!(n >= 0)) return; ok.disabled = true; await supabaseClient.from('assets').update({ value: n, updated_at: new Date().toISOString() }).eq('id', it.id); changed(); });
+        });
+        const del = el('button', 'nw-mini', '✕'); del.type = 'button'; del.setAttribute('aria-label', 'Supprimer');
+        del.addEventListener('click', async () => { if (del.dataset.sure !== '1') { del.dataset.sure = '1'; del.textContent = 'Confirmer ?'; return; } await supabaseClient.from('assets').delete().eq('id', it.id); changed(); });
+        row.append(t, v, del); list.appendChild(row);
+      });
+    });
+    if (!items.length) list.appendChild(el('p', 'nw-intro', 'Ajoute ton premier élément : un compte, un livret, un crédit…'));
+  }
+
+  add.addEventListener('click', async () => {
+    msg.textContent = '';
+    const l = label.value.trim(), n = Number(String(val.value).replace(',', '.'));
+    if (!l) { msg.textContent = 'Donne un nom à cet élément.'; return; }
+    if (!(n >= 0) || val.value === '') { msg.textContent = 'Indique un montant (0 ou plus).'; return; }
+    if (items.length >= 60) { msg.textContent = 'Tu as déjà 60 éléments.'; return; }
+    const u = await getUser(); if (!u) { msg.textContent = 'Connecte-toi.'; return; }
+    add.disabled = true;
+    const { error } = await supabaseClient.from('assets').insert({ user_id: u.id, label: l.slice(0, 80), kind: kind.value, category: cat.value, value: Math.round(n * 100) / 100 });
+    add.disabled = false;
+    if (error) { console.error(error); msg.textContent = '⚠️ Impossible d’ajouter.'; return; }
+    label.value = ''; val.value = ''; changed();
+  });
+
+  load();
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 600)); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
