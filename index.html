@@ -10853,4 +10853,66 @@ function showAiActions(actions) {
   document.head.appendChild(st);
 })();
 </script>
+ <script>
+// Rangement : Abonnements, Foyer, Espaces partagés et carte « ELNOVIA AI » masqués (la discussion reste dans la bulle ✦) ; Scanner en haut de Nova ;
+// Candidatures dans Nova ; « Importer un relevé » remplacé par un petit raccourci à côté de « Mes finances »
+(function () {
+  if (window.__cleanupV1) return; window.__cleanupV1 = true;
+  const st = document.createElement('style');
+  st.textContent = `
+    #subsSection,#homeCard,#spacesSection,section.card.gradient{display:none !important}
+    #life-ai:not(.eln-sheet){display:none !important}
+    #bankSection:not(.ds-show){display:none !important}
+    .ds-bankbtn{display:inline-flex;align-items:center;gap:4px;margin:0 0 0 10px;padding:3px 9px;font-size:12px;font-weight:600;line-height:1.4;
+      background:rgba(139,124,255,.14);color:#b7acff;border:1px solid rgba(139,124,255,.3);border-radius:999px;vertical-align:middle;width:auto;cursor:pointer}
+    .ds-bankbtn.on{background:#8b7cff;color:#fff}
+  `;
+  document.head.appendChild(st);
+
+  // « Demander à Nova » (accueil) ouvre la bulle de discussion ✦ au lieu de la carte masquée
+  document.addEventListener('click', ev => {
+    const b = ev.target.closest && ev.target.closest('#simpleQuick button');
+    if (!b || !/Demander à Nova/.test(b.textContent || '')) return;
+    const bubble = document.getElementById('elnBubble'); if (!bubble) return;
+    ev.preventDefault(); ev.stopImmediatePropagation(); bubble.click();
+  }, true);
+
+  function run() {
+    // Candidatures -> onglet Nova (même méthode que les autres cartes Nova)
+    const jobs = document.getElementById('jobsSection');
+    if (jobs && !jobs.dataset.dsMoved) {
+      const h = jobs.querySelector('h2');
+      if (h) {
+        const tag = document.createElement('span'); tag.style.display = 'none'; tag.textContent = ' elnovia ai'; h.appendChild(tag);
+        const last = document.getElementById('mealCard') || document.getElementById('autoCard');
+        if (last) last.after(jobs);
+        jobs.dataset.dsMoved = '1';
+      }
+    }
+    // Scanner tout en haut de l'onglet Nova
+    const scan = document.getElementById('lifeScanCard');
+    if (scan && !scan.dataset.dsTop) {
+      const first = [...document.querySelectorAll('section.card')].find(c => c !== scan && c.dataset.tab === 'assistant' && !c.classList.contains('gradient') && c.id !== 'life-ai');
+      if (first) { first.before(scan); scan.dataset.dsTop = '1'; }
+    }
+    // Raccourci « relevé » à côté de « Mes finances »
+    const fin = [...document.querySelectorAll('section.card')].find(c => /Mes finances/.test(c.querySelector('h2')?.textContent || ''));
+    const bank = document.getElementById('bankSection');
+    if (fin && bank && !fin.querySelector('.ds-bankbtn')) {
+      const h2 = fin.querySelector('h2');
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'ds-bankbtn'; b.textContent = '⬆ Relevé'; b.title = 'Importer un relevé bancaire';
+      b.addEventListener('click', ev => {
+        ev.preventDefault(); ev.stopPropagation();
+        const open = bank.classList.toggle('ds-show');
+        b.classList.toggle('on', open);
+        if (open) { bank.classList.add('eln-open'); setTimeout(() => { try { bank.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* ignoré */ } }, 60); }
+      });
+      h2.appendChild(b);
+    }
+  }
+  run();
+  try { new MutationObserver(() => { clearTimeout(run.t); run.t = setTimeout(run, 150); }).observe(document.body, { childList: true, subtree: true }); } catch (e) { /* ignoré */ }
+  setTimeout(run, 800); setTimeout(run, 2500);
+})();
+</script>
  </body></html>
