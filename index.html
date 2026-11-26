@@ -10915,4 +10915,24 @@ function showAiActions(actions) {
   setTimeout(run, 800); setTimeout(run, 2500);
 })();
 </script>
+  <script>
+// À l'ouverture (ou au retour dans l'appli après un moment), on revient sur l'onglet « Aujourd'hui »
+(function () {
+  if (window.__startHome) return; window.__startHome = true;
+  function goHome() {
+    try {
+      const b = document.querySelector('#elnTabs button[data-tab="home"]');
+      if (b) { b.click(); window.scrollTo(0, 0); }
+    } catch (e) { /* ignoré */ }
+  }
+  goHome();
+  setTimeout(goHome, 400);
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') hiddenAt = Date.now();
+    else if (hiddenAt && Date.now() - hiddenAt > 30000) { hiddenAt = 0; goHome(); }
+  });
+  window.addEventListener('pageshow', ev => { if (ev.persisted) goHome(); });
+})();
+</script>
  </body></html>
