@@ -10776,4 +10776,72 @@ function showAiActions(actions) {
   }
 })();
 </script>
+  <script>
+// Design v2 « épuré » : fond sombre neutre, cartes plates, une seule couleur d'accent, formulaire de tâche simplifié
+(function () {
+  if (window.__designV2) return; window.__designV2 = true;
+  const old = document.getElementById('designV1'); if (old) old.remove();
+  const st = document.createElement('style');
+  st.id = 'designV2';
+  st.textContent = `
+    :root{--bg:#0a0a10;--card:#12121a;--card2:#181822;--line:rgba(255,255,255,.07);--txt:#f4f4f8;--mut:#8d8d9c;--acc:#8b7cff}
+    html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+    body{background:var(--bg) !important;color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",system-ui,sans-serif !important;-webkit-font-smoothing:antialiased}
+    body::before{display:none !important}
+    header h1,.eln-brand{letter-spacing:.18em;font-weight:700}
+    section.card,div.card{background:var(--card) !important;border:1px solid var(--line) !important;border-radius:18px !important;box-shadow:none !important;-webkit-backdrop-filter:none !important;backdrop-filter:none !important;padding:18px !important;margin-bottom:12px !important}
+    section.card h2{font-size:17px !important;font-weight:600 !important;letter-spacing:-.01em;margin:0 0 10px}
+    section.card.eln-fold:not(.eln-open){padding-top:14px !important;padding-bottom:14px !important}
+    section.card.eln-fold:not(.eln-open) h2{margin:0 !important}
+    p,small,.muted{color:var(--mut)}
+    @keyframes dsIn{from{opacity:0}to{opacity:1}}
+    section.card:not(.eln-hidden),div.card{animation:dsIn .25s ease both}
+    input,select,textarea{font-size:16px !important;background:#0d0d14 !important;border:1px solid var(--line) !important;border-radius:12px !important;color:var(--txt) !important;transition:border-color .15s}
+    input:focus,select:focus,textarea:focus{outline:none !important;border-color:var(--acc) !important}
+    button{transition:opacity .15s,transform .1s;-webkit-tap-highlight-color:transparent}
+    button:active{transform:scale(.97)}
+    button[type=submit],#taskForm button[type=submit]{background:var(--acc) !important;color:#fff !important;border:0 !important;border-radius:12px !important;box-shadow:none !important;font-weight:600;min-height:46px}
+    #simpleQuick{padding:16px !important}
+    #simpleQuick button{background:var(--card2) !important;color:var(--txt) !important;border:1px solid var(--line) !important;border-radius:16px !important;min-height:84px;font-weight:600;font-size:14px;box-shadow:none !important}
+    #simpleQuick button:first-of-type{background:var(--acc) !important;border-color:transparent !important;color:#fff !important}
+    #elnTabs{background:rgba(10,10,16,.88) !important;-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border-top:1px solid var(--line) !important}
+    #elnTabs button{background:none !important;box-shadow:none !important;color:var(--mut) !important;border-radius:12px !important;opacity:.9}
+    #elnTabs button.on{color:var(--acc) !important;background:none !important;box-shadow:none !important;opacity:1;font-weight:700}
+    #elnTabs button.on::after{content:'';display:block;width:5px;height:5px;border-radius:50%;background:var(--acc);margin:3px auto 0}
+    #elnTabs button span:first-child{filter:grayscale(.2)}
+    .eln-fab,#lifeFab,[class*=fab]{box-shadow:none !important}
+    .ds-more{margin:4px 0 10px}
+    .ds-more>summary{cursor:pointer;list-style:none;color:var(--acc);font-weight:600;padding:8px 2px;font-size:14px}
+    .ds-more>summary::-webkit-details-marker{display:none}
+    .ds-more[open]>summary{margin-bottom:6px}
+    .ds-more .ds-grid{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    .ds-row{display:flex;gap:8px;align-items:stretch}
+    .ds-row #taskInput{flex:1;min-width:0;margin:0 !important}
+    .ds-row button[type=submit]{width:auto !important;flex:0 0 auto;margin:0 !important;padding:0 18px !important}
+    @media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important}}
+  `;
+  document.head.appendChild(st);
+
+  function simplifyTaskForm() {
+    const form = document.getElementById('taskForm');
+    if (!form || form.dataset.dsDone) return;
+    const input = document.getElementById('taskInput'), submit = form.querySelector('button[type=submit]');
+    if (!input || !submit) return;
+    form.dataset.dsDone = '1';
+    const hint = document.getElementById('taskFormHint'); if (hint) hint.style.display = 'none';
+    const details = document.createElement('details'); details.className = 'ds-more';
+    const sum = document.createElement('summary'); sum.textContent = 'Options : date, rappel, priorité…';
+    const grid = document.createElement('div'); grid.className = 'ds-grid';
+    details.append(sum, grid);
+    const move = [];
+    for (let n = input.nextSibling; n && n !== submit; n = n.nextSibling) if (n !== hint) move.push(n);
+    move.forEach(n => { if (n.nodeType === 1 || (n.textContent || '').trim()) grid.appendChild(n); });
+    const row = document.createElement('div'); row.className = 'ds-row';
+    input.before(row); row.append(input, submit);
+    row.after(details);
+  }
+  simplifyTaskForm();
+  try { new MutationObserver(() => simplifyTaskForm()).observe(document.body, { childList: true, subtree: true }); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
