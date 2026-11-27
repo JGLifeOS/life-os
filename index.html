@@ -11752,4 +11752,23 @@ function showAiActions(actions) {
   try { new MutationObserver(() => { clearTimeout(run.t); run.t = setTimeout(run, 150); }).observe(document.body, { childList: true, subtree: true }); } catch (e) { /* ignoré */ }
 })();
 </script>
+ <script>
+/* ELNOVIA : le contenu de « Dernières dépenses » s'affiche à l'ouverture */
+(function () {
+  if (window.__lastExp2) return; window.__lastExp2 = true;
+  const st = document.createElement('style');
+  st.textContent = `#finListFold .fp-hide,#finListFold > div{display:block !important}
+    #finListFold .task{display:flex !important}`;
+  document.head.appendChild(st);
+  function run() {
+    const f = document.getElementById('finListFold'); if (!f) return;
+    f.classList.remove('fp-hide');
+    f.querySelectorAll('.fp-hide').forEach(e => e.classList.remove('fp-hide'));
+    const p = document.getElementById('finPanel');
+    if (p && p.nextElementSibling !== f) p.after(f);
+  }
+  run();
+  try { new MutationObserver(() => { clearTimeout(run.t); run.t = setTimeout(run, 150); }).observe(document.body, { childList: true, subtree: true }); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
