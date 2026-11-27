@@ -11737,4 +11737,19 @@ function showAiActions(actions) {
   document.head.appendChild(st);
 })();
 </script>
+                                                                 <script>
+/* ELNOVIA : « Dernières dépenses » de nouveau visible (sous le bloc Mes finances) */
+(function () {
+  if (window.__lastExp) return; window.__lastExp = true;
+  const st = document.createElement('style');
+  st.textContent = `details#finListFold.fp-hide:not([style*="none"]){display:block !important}`;
+  document.head.appendChild(st);
+  function run() {
+    const f = document.getElementById('finListFold'), p = document.getElementById('finPanel');
+    if (f && p && p.nextElementSibling !== f) p.after(f);
+  }
+  run();
+  try { new MutationObserver(() => { clearTimeout(run.t); run.t = setTimeout(run, 150); }).observe(document.body, { childList: true, subtree: true }); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
