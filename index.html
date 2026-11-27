@@ -10935,4 +10935,126 @@ function showAiActions(actions) {
   window.addEventListener('pageshow', ev => { if (ev.persisted) goHome(); });
 })();
 </script>
+        <script>
+// Rentrées d'argent : un choix « Dépense / Rentrée d'argent » dans le formulaire « Ajouter une dépense »
+(function () {
+  if (window.__entreesV2) return; window.__entreesV2 = true;
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const eur = n => (Math.round(n * 100) / 100).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' €';
+  const frDate = s => new Date(s + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+  const st = document.createElement('style');
+  st.textContent = `
+    .en-seg{display:flex;gap:6px;margin:0 0 10px}
+    .en-seg button{flex:1;margin:0 !important;padding:9px 6px !important;border-radius:12px !important;font-size:14px;font-weight:600;background:rgba(255,255,255,.05) !important;color:#a9b3cf !important;border:1px solid rgba(255,255,255,.1) !important;box-shadow:none !important;min-height:0 !important}
+    .en-seg button.on{background:#8b7cff !important;color:#fff !important;border-color:transparent !important}
+    .en-msg{font-size:13px;margin:6px 0 0;color:#ffcf9e}
+    .en-msg.ok{color:#7ee0a1}
+    #enBox{margin:10px 0}
+    #enBox>summary{cursor:pointer;list-style:none;font-weight:600;color:#7ee0a1;padding:6px 0;font-size:14px}
+    #enBox>summary::-webkit-details-marker{display:none}
+    #enBox .en-sum{display:flex;gap:8px;margin:6px 0 8px}
+    #enBox .en-sum div{flex:1;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:8px 10px;font-size:12px;color:#a9b3cf}
+    #enBox .en-sum b{display:block;font-size:16px;color:#fff;margin-top:2px}
+    #enBox .up{color:#7ee0a1 !important}
+    #enBox .down{color:#ff9d9d !important}
+    #enBox .en-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid rgba(255,255,255,.07);font-size:14px}
+    #enBox .en-row .t{flex:1;min-width:0}
+    #enBox .en-row small{display:block;color:#8390b3;font-size:12px}
+    #enBox .en-row b{color:#7ee0a1;white-space:nowrap}
+    #enBox .en-del{background:none;border:0;color:#8390b3;font-size:12px;text-decoration:underline;width:auto;margin:0;padding:6px 0 6px 4px}
+  `;
+  document.head.appendChild(st);
+
+  let mode = 'expense', box = null, sumEl = null, listEl = null, busy = false;
+
+  async function getUser() { try { const { data } = await supabaseClient.auth.getUser(); return data && data.user; } catch (e) { return null; } }
+
+  async function loadBox() {
+    if (!box || busy) return; busy = true;
+    try {
+      const u = await getUser(); if (!u) return;
+      const now = new Date(), first = ymd(new Date(now.getFullYear(), now.getMonth(), 1)), next = ymd(new Date(now.getFullYear(), now.getMonth() + 1, 1));
+      const [inc, exp] = await Promise.all([
+        supabaseClient.from('incomes').select('id,label,amount,received_on').gte('received_on', first).lt('received_on', next).order('received_on', { ascending: false }).limit(100),
+        supabaseClient.from('expenses').select('amount').eq('user_id', u.id).gte('spent_on', first).lt('spent_on', next).limit(2000)
+      ]);
+      if (inc.error) throw inc.error;
+      const ins = inc.data || [], tin = ins.reduce((s, r) => s + Number(r.amount), 0), tex = (exp.data || []).reduce((s, r) => s + Number(r.amount), 0), rest = tin - tex;
+      box.querySelector('summary').textContent = '💰 Rentrées du mois : +' + eur(tin) + (ins.length ? ' (' + ins.length + ')' : '');
+      sumEl.textContent = '';
+      const a = el('div', null, 'Rentrées'); a.appendChild(el('b', 'up', '+' + eur(tin)));
+      const b = el('div', null, 'Dépenses'); b.appendChild(el('b', null, '−' + eur(tex)));
+      const c = el('div', null, 'Reste'); c.appendChild(el('b', rest < 0 ? 'down' : 'up', (rest < 0 ? '−' : '') + eur(Math.abs(rest))));
+      sumEl.append(a, b, c);
+      listEl.textContent = '';
+      ins.forEach(r => {
+        const row = el('div', 'en-row'); const t = el('div', 't', r.label); t.appendChild(el('small', null, frDate(r.received_on)));
+        const del = el('button', 'en-del', 'Supprimer'); del.type = 'button';
+        del.addEventListener('click', async () => { if (del.dataset.sure !== '1') { del.dataset.sure = '1'; del.textContent = 'Confirmer ?'; return; } await supabaseClient.from('incomes').delete().eq('id', r.id); busy = false; loadBox(); });
+        row.append(t, el('b', null, '+' + eur(Number(r.amount))), del); listEl.appendChild(row);
+      });
+    } catch (e) { box.querySelector('summary').textContent = '💰 Rentrées du mois (base non prête)'; }
+    finally { busy = false; }
+  }
+
+  function setup() {
+    const fold = document.getElementById('finFormFold');
+    const form = fold && fold.querySelector('form');
+    if (!form || form.dataset.enDone) return;
+    form.dataset.enDone = '1';
+    const sum = fold.querySelector('summary'); if (sum) sum.textContent = '➕ Ajouter une dépense ou une rentrée d’argent';
+    const inputs = form.querySelectorAll('input'), label = inputs[0], amount = inputs[1], date = form.querySelector('input[type=date]');
+    const selects = form.querySelectorAll('select'), submit = form.querySelector('button[type=submit]');
+    const ph = { l: label.placeholder, s: submit.textContent };
+    const seg = el('div', 'en-seg');
+    const bE = el('button', 'on', 'Dépense'), bI = el('button', null, 'Rentrée d’argent'); bE.type = bI.type = 'button';
+    seg.append(bE, bI); form.prepend(seg);
+    const msg = el('p', 'en-msg'); form.appendChild(msg);
+
+    function setMode(m) {
+      mode = m; msg.textContent = '';
+      bE.classList.toggle('on', m === 'expense'); bI.classList.toggle('on', m === 'income');
+      selects.forEach(s => { s.style.display = m === 'income' ? 'none' : ''; });
+      label.placeholder = m === 'income' ? 'Rentrée (ex. Paye)' : ph.l;
+      submit.textContent = m === 'income' ? 'Ajouter la rentrée' : ph.s;
+    }
+    bE.addEventListener('click', () => setMode('expense'));
+    bI.addEventListener('click', () => setMode('income'));
+
+    // En mode « rentrée », on remplace l'envoi normal (qui crée une dépense)
+    form.addEventListener('submit', async ev => {
+      if (mode !== 'income') return;
+      ev.preventDefault(); ev.stopImmediatePropagation(); msg.textContent = ''; msg.classList.remove('ok');
+      const l = label.value.trim(), v = Number(String(amount.value).replace(',', '.').replace(/\s/g, ''));
+      if (!l) { msg.textContent = 'Écris ce que c’est (ex. Paye).'; return; }
+      if (!(v > 0) || v >= 1000000) { msg.textContent = 'Indique un montant supérieur à 0.'; return; }
+      const u = await getUser(); if (!u) { msg.textContent = 'Connecte-toi.'; return; }
+      submit.disabled = true;
+      const { error } = await supabaseClient.from('incomes').insert({ user_id: u.id, label: l.slice(0, 80), amount: Math.round(v * 100) / 100, received_on: (date && date.value) || ymd(new Date()) });
+      submit.disabled = false;
+      if (error) { console.error(error); msg.textContent = '⚠️ Impossible d’ajouter la rentrée.'; return; }
+      label.value = ''; amount.value = ''; msg.classList.add('ok'); msg.textContent = '✅ Rentrée ajoutée.';
+      busy = false; loadBox();
+    }, true);
+
+    // Récap des rentrées sous le formulaire
+    box = document.createElement('details'); box.id = 'enBox';
+    box.appendChild(el('summary', null, '💰 Rentrées du mois'));
+    sumEl = el('div', 'en-sum'); listEl = el('div');
+    box.append(sumEl, listEl);
+    fold.after(box);
+    loadBox();
+  }
+
+  setup();
+  try { new MutationObserver(() => { clearTimeout(setup.t); setup.t = setTimeout(setup, 200); }).observe(document.body, { childList: true, subtree: true }); } catch (e) { /* ignoré */ }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') loadBox(); });
+  document.getElementById('elnTabs')?.addEventListener('click', () => setTimeout(loadBox, 300));
+  setInterval(() => { if (document.visibilityState === 'visible' && box && box.offsetParent !== null) loadBox(); }, 20000);
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(loadBox, 600)); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
