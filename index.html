@@ -11333,4 +11333,192 @@ function showAiActions(actions) {
   try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 600)); } catch (e) { /* ignoré */ }
 })();
 </script>
+                                                                 <script>
+// Mes finances v3 : « Mes dépenses par catégorie » fusionné dans « Mes finances », avec choix de la période
+(function () {
+  if (window.__finV3) return; window.__finV3 = true;
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const eur = n => (Math.round(n * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+  const frShort = s => new Date(s + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const frLong = s => new Date(s + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const ICON = { Courses: '🛒', Abonnements: '🔁', Logement: '🏠', Transport: '🚗', Santé: '💊', Loisirs: '🎉', Assurance: '🛡️', Restaurant: '🍽️', Restaurants: '🍽️', Shopping: '🛍️', Vêtements: '👕', Autre: '📦' };
+  const BASE = ['Courses', 'Logement', 'Transport', 'Loisirs', 'Santé', 'Abonnements', 'Assurance', 'Restaurants', 'Autre'];
+  const norm = x => String(x || '').trim().toLowerCase();
+  const KEY = 'elnoviaFinPeriod';
+  const rd = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null') || {}; } catch (e) { return {}; } };
+  const wr = v => { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) { /* ignoré */ } };
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #catCard{display:none !important}
+    .fp-hide{display:none !important}
+    #finPanel{margin-top:6px}
+    #finPanel select,#finPanel input{font:inherit;box-sizing:border-box;min-width:0}
+    #finPanel .fp-per{width:100%;margin:0 0 8px}
+    #finPanel .fp-dates{display:flex;gap:8px;margin:0 0 8px}
+    #finPanel .fp-dates input{flex:1}
+    #finPanel .fp-lab{color:var(--mut,#8d8d9c);font-size:14px;margin:8px 0 0}
+    #finPanel .fp-big{font-size:38px;font-weight:800;letter-spacing:-.02em;color:var(--mut,#8d8d9c);line-height:1.15;margin:2px 0 10px}
+    #finPanel .fp-search{width:100%;margin:0 0 6px}
+    #finPanel .fp-cat{border-top:1px solid rgba(255,255,255,.07);padding:11px 0}
+    #finPanel .fp-head{display:flex;align-items:center;gap:10px;cursor:pointer}
+    #finPanel .fp-ic{font-size:20px}
+    #finPanel .fp-name{flex:1;min-width:0;font-size:15px}
+    #finPanel .fp-name small{display:block;color:var(--mut,#8d8d9c);font-size:12px}
+    #finPanel .fp-amt{font-weight:700;white-space:nowrap}
+    #finPanel .fp-bar{height:6px;background:rgba(255,255,255,.07);border-radius:99px;margin:8px 0 0;overflow:hidden}
+    #finPanel .fp-bar i{display:block;height:100%;background:var(--acc,#8b7cff);border-radius:99px}
+    #finPanel .fp-list{margin:8px 0 0 30px}
+    #finPanel .fp-row{display:flex;gap:8px;padding:7px 0;font-size:13px;border-top:1px dashed rgba(255,255,255,.07);cursor:pointer}
+    #finPanel .fp-row .l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #finPanel .fp-row small{color:var(--mut,#8d8d9c);margin-right:6px}
+    #finPanel .fp-row b{white-space:nowrap}
+    #finPanel .fp-mv{margin:2px 0 8px;padding:10px;background:rgba(139,124,255,.08);border:1px solid rgba(139,124,255,.25);border-radius:12px;font-size:13px}
+    #finPanel .fp-mv select,#finPanel .fp-mv input[type=text]{width:100%;margin:4px 0}
+    #finPanel .fp-mv label.ck{display:flex;gap:8px;align-items:flex-start;margin:6px 0}
+    #finPanel .fp-mv label.ck input{width:auto;margin-top:2px}
+    #finPanel .fp-mv .btns{display:flex;gap:8px;margin-top:6px}
+    #finPanel .fp-mv .btns button{flex:1;margin:0}
+    #finPanel .fp-mv .sec{background:rgba(255,255,255,.06) !important;color:inherit !important}
+    #finPanel .fp-warn{color:#ffcf9e;font-size:13px;margin:6px 0 0}
+    #finPanel .fp-empty{color:var(--mut,#8d8d9c);font-size:14px;margin:8px 0}
+  `;
+  document.head.appendChild(st);
+
+  let all = [], loaded = false, openCat = null, moveId = null, built = null;
+  const saved = rd();
+  const S = { per: saved.per || 'month', from: saved.from || '', to: saved.to || '', q: '' };
+
+  function range() {
+    const now = new Date(), y = now.getFullYear(), m = now.getMonth();
+    switch (S.per) {
+      case 'month': return { a: ymd(new Date(y, m, 1)), b: ymd(new Date(y, m + 1, 1)), label: now.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }) };
+      case 'prev': return { a: ymd(new Date(y, m - 1, 1)), b: ymd(new Date(y, m, 1)), label: new Date(y, m - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }) };
+      case '30': return { a: ymd(new Date(now.getTime() - 30 * 86400000)), b: '9999-12-31', label: '30 derniers jours' };
+      case '90': return { a: ymd(new Date(now.getTime() - 90 * 86400000)), b: '9999-12-31', label: '3 derniers mois' };
+      case 'year': return { a: y + '-01-01', b: (y + 1) + '-01-01', label: 'Année ' + y };
+      case 'custom': { const a = S.from || '0000-01-01', b = S.to ? ymd(new Date(new Date(S.to + 'T12:00:00').getTime() + 86400000)) : '9999-12-31'; return { a, b, label: (S.from ? frShort(S.from) : 'début') + ' → ' + (S.to ? frShort(S.to) : 'aujourd’hui') }; }
+      default: return { a: '0000-01-01', b: '9999-12-31', label: 'Depuis le début' };
+    }
+  }
+
+  async function load() {
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser(); if (!user) return;
+      let from = 0, got = [];
+      for (let k = 0; k < 10; k++) {
+        const { data, error } = await supabaseClient.from('expenses').select('id,label,amount,category,spent_on').eq('user_id', user.id).order('spent_on', { ascending: false }).range(from, from + 999);
+        if (error) throw error; got = got.concat(data || []); if (!data || data.length < 1000) break; from += 1000;
+      }
+      all = got; loaded = true; render();
+    } catch (e) { console.error(e); }
+  }
+
+  function movePanel(r, current) {
+    const box = el('div', 'fp-mv');
+    box.appendChild(el('div', null, 'Déplacer « ' + (r.label || '—').slice(0, 40) + ' » vers :'));
+    const sel = el('select');
+    [...new Set([...BASE, ...all.map(x => (x.category || 'Autre').trim() || 'Autre')])].filter(c => c !== current).forEach(c => { const o = el('option', null, (ICON[c] || '🏷️') + ' ' + c); o.value = c; sel.appendChild(o); });
+    const neu = el('option', null, '➕ Nouvelle catégorie…'); neu.value = '__new'; sel.appendChild(neu);
+    const inp = el('input'); inp.type = 'text'; inp.maxLength = 30; inp.placeholder = 'Nom de la nouvelle catégorie'; inp.style.display = 'none';
+    sel.addEventListener('change', () => { inp.style.display = sel.value === '__new' ? '' : 'none'; if (sel.value === '__new') inp.focus(); });
+    const same = all.filter(x => x.id !== r.id && norm(x.label) === norm(r.label) && ((x.category || 'Autre').trim() || 'Autre') === current);
+    box.append(sel, inp);
+    let ck = null;
+    if (same.length) { const lab = el('label', 'ck'); ck = el('input'); ck.type = 'checkbox'; ck.checked = true; lab.append(ck, document.createTextNode('Faire pareil pour les ' + same.length + ' autre(s) ligne(s) « ' + (r.label || '').slice(0, 30) + ' »')); box.appendChild(lab); }
+    const msg = el('div', 'fp-warn'); const btns = el('div', 'btns');
+    const ok = el('button', null, 'Déplacer'); ok.type = 'button'; const no = el('button', 'sec', 'Annuler'); no.type = 'button';
+    no.addEventListener('click', ev => { ev.stopPropagation(); moveId = null; render(); });
+    ok.addEventListener('click', async ev => {
+      ev.stopPropagation();
+      let target = sel.value === '__new' ? inp.value.replace(/\s+/g, ' ').trim() : sel.value;
+      if (!target) { msg.textContent = 'Écris le nom de la catégorie.'; return; }
+      target = target.charAt(0).toUpperCase() + target.slice(1, 30);
+      const ex = [...new Set(all.map(x => (x.category || 'Autre').trim()).concat(BASE))].find(c => c.toLowerCase() === target.toLowerCase()); if (ex) target = ex;
+      const ids = [r.id].concat(ck && ck.checked ? same.map(x => x.id) : []);
+      ok.disabled = true;
+      const { error } = await supabaseClient.from('expenses').update({ category: target }).in('id', ids);
+      if (error) { console.error(error); ok.disabled = false; msg.textContent = '⚠️ Impossible de déplacer (la base refuse peut-être cette catégorie).'; return; }
+      ids.forEach(id => { const x = all.find(z => z.id === id); if (x) x.category = target; });
+      moveId = null; openCat = target; render();
+    });
+    btns.append(ok, no); box.append(msg, btns); box.addEventListener('click', ev => ev.stopPropagation());
+    return box;
+  }
+
+  function build() {
+    const fin = [...document.querySelectorAll('section.card')].find(c => /Mes finances/.test(c.querySelector('h2')?.textContent || ''));
+    if (!fin) return;
+    if (built && built.isConnected) { hideOld(fin); return; }
+    const panel = el('div'); panel.id = 'finPanel';
+    const per = el('select', 'fp-per');
+    [['month', 'Ce mois-ci'], ['prev', 'Mois dernier'], ['30', '30 derniers jours'], ['90', '3 derniers mois'], ['year', 'Cette année'], ['all', 'Tout (depuis le début)'], ['custom', 'Dates précises…']].forEach(([v, l]) => { const o = el('option', null, l); o.value = v; per.appendChild(o); });
+    per.value = S.per;
+    const dates = el('div', 'fp-dates'); const d1 = el('input'); d1.type = 'date'; d1.value = S.from; const d2 = el('input'); d2.type = 'date'; d2.value = S.to; dates.append(d1, d2);
+    dates.style.display = S.per === 'custom' ? '' : 'none';
+    const lab = el('div', 'fp-lab'); const big = el('div', 'fp-big');
+    const search = el('input', 'fp-search'); search.type = 'search'; search.placeholder = '🔎 Chercher (ex. Netflix, Leclerc…)';
+    const list = el('div');
+    panel.append(per, dates, lab, big, search, list);
+    panel._r = { per, dates, d1, d2, lab, big, search, list };
+    per.addEventListener('change', () => { S.per = per.value; dates.style.display = S.per === 'custom' ? '' : 'none'; wr({ per: S.per, from: S.from, to: S.to }); openCat = null; moveId = null; render(); });
+    const dch = () => { S.from = d1.value; S.to = d2.value; wr({ per: S.per, from: S.from, to: S.to }); render(); };
+    d1.addEventListener('change', dch); d2.addEventListener('change', dch);
+    let t; search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { S.q = search.value.trim().toLowerCase(); render(); }, 200); });
+    const fold = document.getElementById('finFormFold');
+    (document.getElementById('enBox') || fold || fin.querySelector('h2')).after(panel);
+    built = panel; hideOld(fin); render();
+  }
+
+  // masque l'ancien résumé de « Mes finances » (mois, total, barre, dernières dépenses, filtre) : tout ce qui suit le formulaire
+  function hideOld(fin) {
+    const fold = document.getElementById('finFormFold'); if (!fold) return;
+    for (let n = fold.nextElementSibling; n; n = n.nextElementSibling) {
+      if (n.id === 'enBox' || n.id === 'finPanel') continue;
+      if (!n.classList.contains('fp-hide')) n.classList.add('fp-hide');
+    }
+  }
+
+  function render() {
+    if (!built) return; const R = built._r, rg = range();
+    const rows = all.filter(r => r.spent_on >= rg.a && r.spent_on < rg.b && (!S.q || norm(r.label).includes(S.q) || norm(r.category).includes(S.q)));
+    const sum = rows.reduce((s, r) => s + Number(r.amount), 0);
+    R.lab.textContent = rg.label.charAt(0).toUpperCase() + rg.label.slice(1) + ' · ' + rows.length + ' dépense(s)';
+    R.big.textContent = eur(sum);
+    R.list.textContent = '';
+    if (!rows.length) { R.list.appendChild(el('p', 'fp-empty', loaded && !all.length ? 'Aucune dépense pour le moment. Importe un relevé ou ajoute une dépense.' : 'Aucune dépense sur cette période.')); return; }
+    const by = new Map();
+    rows.forEach(r => { const c = (r.category || 'Autre').trim() || 'Autre'; const e = by.get(c) || { c, sum: 0, rows: [] }; e.sum += Number(r.amount); e.rows.push(r); by.set(c, e); });
+    [...by.values()].sort((a, b) => b.sum - a.sum).forEach(g => {
+      const box = el('div', 'fp-cat'), hd = el('div', 'fp-head'), pct = Math.round(g.sum / (sum || 1) * 100);
+      const nm = el('div', 'fp-name', g.c); nm.appendChild(el('small', null, g.rows.length + ' dépense(s) · ' + pct + ' %'));
+      const isOpen = openCat === g.c || !!S.q;
+      hd.append(el('span', 'fp-ic', ICON[g.c] || '🏷️'), nm, el('span', 'fp-amt', eur(g.sum)), el('span', null, isOpen ? '▴' : '▾'));
+      hd.addEventListener('click', () => { openCat = openCat === g.c ? null : g.c; moveId = null; render(); });
+      box.appendChild(hd);
+      const bar = el('div', 'fp-bar'), f = el('i'); f.style.width = Math.max(2, pct) + '%'; bar.appendChild(f); box.appendChild(bar);
+      if (isOpen) {
+        const ul = el('div', 'fp-list');
+        g.rows.slice(0, 300).forEach(r => {
+          const row = el('div', 'fp-row'), l = el('span', 'l'); l.append(el('small', null, frShort(r.spent_on)), document.createTextNode(r.label || '—')); row.append(l, el('b', null, eur(Number(r.amount))));
+          row.addEventListener('click', () => { moveId = moveId === r.id ? null : r.id; render(); });
+          ul.appendChild(row); if (moveId === r.id) ul.appendChild(movePanel(r, g.c));
+        });
+        if (g.rows.length > 300) ul.appendChild(el('p', 'fp-empty', '… et ' + (g.rows.length - 300) + ' autres (utilise la recherche).'));
+        box.appendChild(ul);
+      }
+      R.list.appendChild(box);
+    });
+  }
+
+  build(); load();
+  try { new MutationObserver(() => { clearTimeout(build.t); build.t = setTimeout(build, 200); }).observe(document.body, { childList: true, subtree: true }); } catch (e) { /* ignoré */ }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') load(); });
+  document.getElementById('elnTabs')?.addEventListener('click', () => setTimeout(load, 300));
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 600)); } catch (e) { /* ignoré */ }
+  setInterval(() => { if (document.visibilityState === 'visible' && built && built.offsetParent !== null) load(); }, 25000);
+})();
+</script>
  </body></html>
