@@ -11716,4 +11716,25 @@ function showAiActions(actions) {
   movers();
 })();
 </script>
+      <script>
+/* ELNOVIA : écran de connexion remonté en haut (visible au-dessus de la fenêtre Face ID / clé d'accès) */
+(function () {
+  if (window.__lgUp) return; window.__lgUp = true;
+  const st = document.createElement('style');
+  st.textContent = `
+    #loginScreen .lg-wrap{justify-content:flex-start !important;padding-top:calc(14px + env(safe-area-inset-top)) !important;padding-bottom:20px !important}
+    #loginScreen .lg-brand{margin-bottom:12px !important}
+    #loginScreen .lg-mark{width:52px !important;height:52px !important;font-size:26px !important;border-radius:16px !important;margin-bottom:8px !important}
+    #loginScreen .lg-name{font-size:24px !important;letter-spacing:5px !important}
+    #loginScreen .lg-tag,#loginScreen .lg-sub{display:none !important}
+    #loginScreen .lg-card{padding:16px 18px !important}
+    #loginScreen .lg-title{margin:0 0 2px !important;font-size:18px !important}
+    #loginScreen label.lg-f{margin:8px 0 4px !important}
+    #loginScreen button[type=submit]{margin-top:14px !important;height:50px !important}
+    #loginScreen #loginMessage{margin:8px 0 0 !important;min-height:0 !important}
+    #loginScreen .lg-foot{margin-top:10px !important}
+  `;
+  document.head.appendChild(st);
+})();
+</script>
  </body></html>
