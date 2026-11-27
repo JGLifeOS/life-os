@@ -11170,4 +11170,167 @@ function showAiActions(actions) {
   try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 600)); } catch (e) { /* ignoré */ }
 })();
 </script>
+                    <script>
+// Mes dépenses par catégorie v2 (remplace v1 : déplacer une ligne / créer une catégorie) : tout ce qui est dans l'appli (relevé importé inclus), par période, avec détail et recherche
+(function () {
+  if (window.__catV2) return; window.__catV2 = true;
+  const oldCard = document.getElementById('catCard'); if (oldCard) oldCard.remove();
+  const anchor = document.getElementById('recapSection') || [...document.querySelectorAll('section.card')].find(c => /Mes finances/.test(c.querySelector('h2')?.textContent || ''));
+  if (!anchor) return;
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const eur = n => (Math.round(n * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+  const frDate = s => new Date(s + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+  const frShort = s => new Date(s + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const ICON = { Courses: '🛒', Abonnements: '🔁', Logement: '🏠', Transport: '🚗', Santé: '💊', Loisirs: '🎉', Assurance: '🛡️', Restaurant: '🍽️', Restaurants: '🍽️', Shopping: '🛍️', Vêtements: '👕', Autre: '📦' };
+
+  const st = document.createElement('style');
+  st.textContent = `
+    #catCard .ct-intro{color:#a9b3cf;font-size:13px;margin:0 0 10px}
+    #catCard .ct-top{display:flex;gap:8px;margin-bottom:8px}
+    #catCard select,#catCard input{font:inherit;box-sizing:border-box;min-width:0}
+    #catCard .ct-top select{flex:1}
+    #catCard .ct-search{width:100%;margin-bottom:10px}
+    #catCard .ct-total{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:10px 12px;margin-bottom:6px}
+    #catCard .ct-total small{display:block;color:#8390b3;font-size:12px}
+    #catCard .ct-total b{font-size:22px}
+    #catCard .ct-cat{border-top:1px solid rgba(255,255,255,.07);padding:10px 0}
+    #catCard .ct-head{display:flex;align-items:center;gap:10px;cursor:pointer}
+    #catCard .ct-ic{font-size:20px}
+    #catCard .ct-name{flex:1;min-width:0;font-size:15px}
+    #catCard .ct-name small{display:block;color:#8390b3;font-size:12px}
+    #catCard .ct-amt{font-weight:700;white-space:nowrap}
+    #catCard .ct-bar{height:5px;background:rgba(255,255,255,.07);border-radius:99px;margin:7px 0 0;overflow:hidden}
+    #catCard .ct-bar i{display:block;height:100%;background:#8b7cff;border-radius:99px}
+    #catCard .ct-list{margin:8px 0 0 30px}
+    #catCard .ct-row{display:flex;gap:8px;padding:6px 0;font-size:13px;border-top:1px dashed rgba(255,255,255,.07)}
+    #catCard .ct-row .l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #catCard .ct-row small{color:#8390b3;margin-right:6px}
+    #catCard .ct-row b{white-space:nowrap}
+    #catCard .ct-row{cursor:pointer}
+    #catCard .ct-mv{margin:2px 0 8px;padding:10px;background:rgba(139,124,255,.08);border:1px solid rgba(139,124,255,.25);border-radius:12px;font-size:13px}
+    #catCard .ct-mv select,#catCard .ct-mv input[type=text]{width:100%;margin:4px 0}
+    #catCard .ct-mv label.ck{display:flex;gap:8px;align-items:flex-start;margin:6px 0;color:#c9d2ee}
+    #catCard .ct-mv label.ck input{width:auto;margin-top:2px}
+    #catCard .ct-mv .btns{display:flex;gap:8px;margin-top:6px}
+    #catCard .ct-mv .btns button{flex:1;margin:0}
+    #catCard .ct-mv .sec{background:rgba(255,255,255,.06) !important;color:#c9d2ee !important}
+    #catCard .ct-warn{color:#ffcf9e;font-size:13px;margin:8px 0 0}
+  `;
+  document.head.appendChild(st);
+
+  const card = el('section', 'card'); card.id = 'catCard';
+  const h = el('h2', null, '🧾 Mes dépenses par catégorie');
+  const hid = el('span', null, ' financ'); hid.style.display = 'none'; h.appendChild(hid);
+  const intro = el('p', 'ct-intro', 'Tout ce que tu as dépensé, rangé par catégorie : courses, loisirs, assurance, abonnements… Touche une catégorie pour voir le détail.');
+  const top = el('div', 'ct-top');
+  const per = el('select');
+  [['all', 'Tout (depuis le début)'], ['month', 'Ce mois-ci'], ['30', '30 derniers jours'], ['90', '3 derniers mois'], ['year', 'Cette année']].forEach(([v, l]) => { const o = el('option', null, l); o.value = v; per.appendChild(o); });
+  top.appendChild(per);
+  const search = el('input', 'ct-search'); search.type = 'search'; search.placeholder = '🔎 Chercher (ex. Netflix, Leclerc…)';
+  const total = el('div', 'ct-total');
+  const list = el('div');
+  card.append(h, intro, top, search, total, list);
+  anchor.after(card);
+
+  let all = [], openCat = null, loaded = false, moveId = null;
+  const BASE = ['Courses', 'Logement', 'Transport', 'Loisirs', 'Santé', 'Abonnements', 'Assurance', 'Restaurants', 'Autre'];
+  const normLabel = x => String(x || '').trim().toLowerCase();
+  async function load() {
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser(); if (!user) return;
+      let from = 0, got = [];
+      for (let k = 0; k < 10; k++) {   // jusqu'à 10 000 lignes, par paquets de 1000
+        const { data, error } = await supabaseClient.from('expenses').select('id,label,amount,category,spent_on').eq('user_id', user.id).order('spent_on', { ascending: false }).range(from, from + 999);
+        if (error) throw error; got = got.concat(data || []); if (!data || data.length < 1000) break; from += 1000;
+      }
+      all = got; loaded = true; render();
+    } catch (e) { console.error(e); list.textContent = ''; list.appendChild(el('p', 'ct-warn', 'Impossible de charger tes dépenses.')); }
+  }
+
+  function inPeriod(r) {
+    const v = per.value, now = new Date(), d = r.spent_on;
+    if (v === 'month') return d >= ymd(new Date(now.getFullYear(), now.getMonth(), 1)) && d < ymd(new Date(now.getFullYear(), now.getMonth() + 1, 1));
+    if (v === '30') return d >= ymd(new Date(now.getTime() - 30 * 86400000));
+    if (v === '90') return d >= ymd(new Date(now.getTime() - 90 * 86400000));
+    if (v === 'year') return d >= now.getFullYear() + '-01-01';
+    return true;
+  }
+
+  function movePanel(r, current) {
+    const box = el('div', 'ct-mv');
+    box.appendChild(el('div', null, 'Déplacer « ' + (r.label || '—').slice(0, 40) + ' » vers :'));
+    const sel = el('select');
+    const cats = [...new Set([...BASE, ...all.map(x => (x.category || 'Autre').trim() || 'Autre')])].filter(c => c !== current);
+    cats.forEach(c => { const o = el('option', null, (ICON[c] || '🏷️') + ' ' + c); o.value = c; sel.appendChild(o); });
+    const neu = el('option', null, '➕ Nouvelle catégorie…'); neu.value = '__new'; sel.appendChild(neu);
+    const inp = el('input'); inp.type = 'text'; inp.maxLength = 30; inp.placeholder = 'Nom de la nouvelle catégorie'; inp.style.display = 'none';
+    sel.addEventListener('change', () => { inp.style.display = sel.value === '__new' ? '' : 'none'; if (sel.value === '__new') inp.focus(); });
+    const same = all.filter(x => x.id !== r.id && normLabel(x.label) === normLabel(r.label) && ((x.category || 'Autre').trim() || 'Autre') === current);
+    let ck = null;
+    if (same.length) { const lab = el('label', 'ck'); ck = el('input'); ck.type = 'checkbox'; ck.checked = true; lab.append(ck, document.createTextNode('Faire pareil pour les ' + same.length + ' autre(s) ligne(s) « ' + (r.label || '').slice(0, 30) + ' »')); box.append(sel, inp, lab); }
+    else box.append(sel, inp);
+    const msg = el('div', 'ct-warn');
+    const btns = el('div', 'btns'); const ok = el('button', null, 'Déplacer'); ok.type = 'button'; const no = el('button', 'sec', 'Annuler'); no.type = 'button';
+    no.addEventListener('click', ev => { ev.stopPropagation(); moveId = null; render(); });
+    ok.addEventListener('click', async ev => {
+      ev.stopPropagation();
+      let target = sel.value === '__new' ? inp.value.replace(/\s+/g, ' ').trim() : sel.value;
+      if (!target) { msg.textContent = 'Écris le nom de la catégorie.'; return; }
+      target = target.charAt(0).toUpperCase() + target.slice(1, 30);
+      const existing = [...new Set(all.map(x => (x.category || 'Autre').trim()).concat(BASE))].find(c => c.toLowerCase() === target.toLowerCase()); if (existing) target = existing;
+      const ids = [r.id].concat(ck && ck.checked ? same.map(x => x.id) : []);
+      ok.disabled = true;
+      const { error } = await supabaseClient.from('expenses').update({ category: target }).in('id', ids);
+      if (error) { console.error(error); ok.disabled = false; msg.textContent = '⚠️ Impossible de déplacer (une règle de la base refuse peut-être cette catégorie).'; return; }
+      ids.forEach(id => { const x = all.find(z => z.id === id); if (x) x.category = target; });
+      moveId = null; openCat = target; render();
+    });
+    btns.append(ok, no); box.append(msg, btns);
+    box.addEventListener('click', ev => ev.stopPropagation());
+    return box;
+  }
+
+  function render() {
+    const q = search.value.trim().toLowerCase();
+    const rows = all.filter(r => inPeriod(r) && (!q || String(r.label || '').toLowerCase().includes(q) || String(r.category || '').toLowerCase().includes(q)));
+    const sum = rows.reduce((s, r) => s + Number(r.amount), 0);
+    total.textContent = '';
+    total.appendChild(el('small', null, rows.length ? rows.length + ' dépense(s) · du ' + frDate(rows[rows.length - 1].spent_on) + ' au ' + frDate(rows[0].spent_on) : 'Aucune dépense sur cette période'));
+    total.appendChild(el('b', null, eur(sum)));
+    list.textContent = '';
+    if (!rows.length) { if (loaded && !all.length) list.appendChild(el('p', 'ct-intro', 'Aucune dépense pour le moment. Importe un relevé ou ajoute une dépense.')); return; }
+    const by = new Map();
+    rows.forEach(r => { const c = (r.category || 'Autre').trim() || 'Autre'; const e = by.get(c) || { c, sum: 0, rows: [] }; e.sum += Number(r.amount); e.rows.push(r); by.set(c, e); });
+    [...by.values()].sort((a, b) => b.sum - a.sum).forEach(g => {
+      const box = el('div', 'ct-cat'); const hd = el('div', 'ct-head');
+      const nm = el('div', 'ct-name', g.c); nm.appendChild(el('small', null, g.rows.length + ' dépense(s) · ' + Math.round(g.sum / (sum || 1) * 100) + ' %'));
+      hd.append(el('span', 'ct-ic', ICON[g.c] || '🏷️'), nm, el('span', 'ct-amt', eur(g.sum)), el('span', null, openCat === g.c || q ? '▴' : '▾'));
+      hd.addEventListener('click', () => { openCat = openCat === g.c ? null : g.c; render(); });
+      box.appendChild(hd);
+      const bar = el('div', 'ct-bar'); const f = el('i'); f.style.width = Math.max(2, Math.round(g.sum / (sum || 1) * 100)) + '%'; bar.appendChild(f); box.appendChild(bar);
+      if (openCat === g.c || q) {
+        const ul = el('div', 'ct-list');
+        g.rows.slice(0, 300).forEach(r => {
+          const row = el('div', 'ct-row'); const l = el('span', 'l'); l.append(el('small', null, frShort(r.spent_on)), document.createTextNode(r.label || '—')); row.append(l, el('b', null, eur(Number(r.amount))));
+          row.addEventListener('click', () => { moveId = moveId === r.id ? null : r.id; render(); });
+          ul.appendChild(row);
+          if (moveId === r.id) ul.appendChild(movePanel(r, g.c));
+        });
+        if (g.rows.length > 300) ul.appendChild(el('p', 'ct-intro', '… et ' + (g.rows.length - 300) + ' autres (utilise la recherche).'));
+        box.appendChild(ul);
+      }
+      list.appendChild(box);
+    });
+  }
+
+  per.addEventListener('change', () => { openCat = null; render(); });
+  let t; search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(render, 200); });
+  load();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') load(); });
+  document.getElementById('elnTabs')?.addEventListener('click', () => setTimeout(load, 300));
+  try { supabaseClient.auth.onAuthStateChange(() => setTimeout(load, 600)); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
