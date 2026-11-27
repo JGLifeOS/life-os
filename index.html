@@ -11567,4 +11567,64 @@ function showAiActions(actions) {
   try { new MutationObserver(() => { clearTimeout(setup.t); setup.t = setTimeout(setup, 200); }).observe(document.body, { childList: true, subtree: true }); } catch (e) { /* ignoré */ }
 })();
 </script>
+<script>
+/* ELNOVIA : "Tout supprimer" discret en haut de Courses + décaler une tâche */
+(function () {
+  if (window.__tkV3) return; window.__tkV3 = true;
+  const st = document.createElement('style');
+  st.textContent = `
+    #shopSection .s-top{display:flex;justify-content:flex-end;margin:-2px 0 6px}
+    #shopSection .s-all{background:transparent !important;border:none !important;color:#8b8fa3 !important;font-size:12px !important;padding:4px 6px !important;margin:0 !important;border-radius:8px;opacity:.85;width:auto}
+    #shopSection .s-all.sure{background:#e5484d !important;color:#fff !important;opacity:1}
+    #taskList .t-move{background:transparent !important;border:none !important;color:#a78bfa !important;font-size:12px;padding:6px 8px;width:auto;position:relative;overflow:visible}
+    #taskList .t-move input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+  `;
+  document.head.appendChild(st);
+
+  function shop() {
+    const card = document.getElementById('shopSection'); if (!card) return;
+    const all = card.querySelector('.s-all'), sel = card.querySelector('select');
+    if (!all || !sel || all.dataset.top) return;
+    all.dataset.top = '1';
+    const bar = document.createElement('div'); bar.className = 's-top';
+    sel.after(bar); bar.appendChild(all);
+  }
+
+  function visible() {
+    try {
+      const v = id => (document.getElementById(id) || { value: 'all' }).value;
+      const s = v('filterStatus'), p = v('filterPriority'), c = v('filterCategory');
+      return tasks.filter(t => (s === 'all' || t.status === s) && (p === 'all' || t.priority === p) && (c === 'all' || t.category === c));
+    } catch (e) { return []; }
+  }
+
+  function tasksSetup() {
+    const l = document.getElementById('taskList'); if (!l) return;
+    const rows = Array.from(l.querySelectorAll(':scope > .task'));
+    const data = visible();
+    if (rows.length !== data.length) return;
+    rows.forEach((row, i) => {
+      if (row.querySelector('.t-move')) return;
+      const t = data[i];
+      const b = document.createElement('button'); b.type = 'button'; b.className = 't-move ghost';
+      b.setAttribute('aria-label', 'Décaler la tâche'); b.title = 'Décaler à une date'; b.textContent = 'Décaler';
+      const inp = document.createElement('input'); inp.type = 'date';
+      inp.value = t.due_date ? String(t.due_date).slice(0, 10) : '';
+      inp.addEventListener('change', async () => {
+        if (!inp.value) return;
+        const { error } = await supabaseClient.from('tasks').update({ due_date: inp.value + 'T12:00:00' }).eq('id', t.id);
+        if (error) { console.error(error); alert('Impossible de décaler la tâche.'); return; }
+        if (typeof loadTasks === 'function') await loadTasks();
+      });
+      b.appendChild(inp);
+      const del = row.querySelector('button.delete');
+      if (del) del.before(b); else row.appendChild(b);
+    });
+  }
+
+  function run() { shop(); tasksSetup(); }
+  run();
+  try { new MutationObserver(() => { clearTimeout(run.t); run.t = setTimeout(run, 120); }).observe(document.body, { childList: true, subtree: true }); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
