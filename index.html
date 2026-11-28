@@ -11771,4 +11771,27 @@ function showAiActions(actions) {
   try { new MutationObserver(() => { clearTimeout(run.t); run.t = setTimeout(run, 150); }).observe(document.body, { childList: true, subtree: true }); } catch (e) { /* ignoré */ }
 })();
 </script>
+                                                                 <script>
+/* ELNOVIA : corbeille des tâches toujours cliquable + menu « Perso » retiré du formulaire de dépense */
+(function () {
+  if (window.__fixV6) return; window.__fixV6 = true;
+  const st = document.createElement('style');
+  st.textContent = `
+    #taskList .t-move{overflow:hidden !important;position:relative !important;flex:none}
+    #taskList .t-move input{min-width:0 !important;max-width:100% !important;width:100% !important;height:100% !important;left:0 !important;top:0 !important}
+    #taskList button.delete{position:relative;z-index:3}
+    .fx-hide{display:none !important}
+  `;
+  document.head.appendChild(st);
+  function run() {
+    document.querySelectorAll('form').forEach(f => {
+      if (!f.querySelector('input[type=date]') || f.id === 'taskForm') return;
+      const sels = f.querySelectorAll('select');
+      sels.forEach(s => { if ([...s.options].some(o => /👤\s*Perso/.test(o.textContent))) s.classList.add('fx-hide'); });
+    });
+  }
+  run();
+  try { new MutationObserver(() => { clearTimeout(run.t); run.t = setTimeout(run, 200); }).observe(document.body, { childList: true, subtree: true }); } catch (e) { /* ignoré */ }
+})();
+</script>
  </body></html>
